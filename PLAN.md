@@ -96,7 +96,7 @@ Tracker: **GitHub issues + milestones** in `brabbit61/email-assistant` (no Proje
 
 **Setup to create first:** milestones `Phase 0: Prerequisites` … `Phase 5: Windows box deploy`; labels `type:setup|infra|feature|spec|docs`, `needs-signoff`, `user-task`, `blocked`.
 
-**Status (2026-07-08):** milestones, labels, and the first batch are live — T0.1–T0.6 = issues #1–#6, T1.1–T1.11 = issues #7–#17. Phase 2 tickets get drafted after this batch is reviewed and Phase 1 nears completion.
+**Status (2026-07-08):** milestones, labels, and the first batch are live — T0.1–T0.6 = issues #1–#6, T1.1–T1.11 = issues #7–#17. Phase 2–5 requirements are preserved as epic issues #18–#21 (one per phase, milestoned, chained by Blocked-by); each epic is broken into atomic spec-first tickets when its predecessor phase nears completion. Future sessions: read this file + the open epics to resume.
 
 **Ticket template (every issue body, no code snippets anywhere):** Goal · Context · Scope (in/out) · Acceptance criteria · Decisions requiring sign-off (checklist Jenit ticks) · Blocked by (#refs).
 

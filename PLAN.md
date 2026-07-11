@@ -96,7 +96,9 @@ Tracker: **GitHub issues + milestones** in `brabbit61/email-assistant` (no Proje
 
 **Setup to create first:** milestones `Phase 0: Prerequisites` … `Phase 5: Windows box deploy`; labels `type:setup|infra|feature|spec|docs`, `needs-signoff`, `user-task`, `blocked`.
 
-**Status (2026-07-08):** milestones, labels, and the first batch are live — T0.1–T0.6 = issues #1–#6, T1.1–T1.11 = issues #7–#17. Phase 2–5 requirements are preserved as epic issues #18–#21 (one per phase, milestoned, chained by Blocked-by); each epic is broken into atomic spec-first tickets when its predecessor phase nears completion. Future sessions: read this file + the open epics to resume.
+**Status (2026-07-11):** milestones, labels, and the first batch are live — T0.1–T0.6 = issues #1–#6, T1.1–T1.11 = issues #7–#17. Phase 2–5 requirements are preserved as epic issues #18–#21 (one per phase, milestoned, chained by Blocked-by); each epic is broken into atomic spec-first tickets when its predecessor phase nears completion. Future sessions: read this file + the open epics to resume.
+
+hermes-agent installed on the Linux desktop, pinned to tag **v2026.7.7.2** (commit `9de9c25`), install layout: default (`~/.hermes` config/data, `~/.local/bin/hermes` launcher). Provider configured for direct Anthropic API (`model.provider: anthropic`, `model.default: claude-sonnet-5`), verified with a single-query chat. See #5 for sign-off.
 
 **Ticket template (every issue body, no code snippets anywhere):** Goal · Context · Scope (in/out) · Acceptance criteria · Decisions requiring sign-off (checklist Jenit ticks) · Blocked by (#refs).
 

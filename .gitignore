@@ -216,4 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-client_secret_*.json
+
+# email-assistant: credentials and runtime state (signed off in #6)
+/secrets/
+/data/
+client_secret*.json

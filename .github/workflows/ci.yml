@@ -1,0 +1,31 @@
+# CI requirements + use cases: issue #6 comments. Same commands as local dev — no CI-only drift.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5 # reads .python-version, installs 3.13
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run assistant # entry point resolves on a cold clone (UC2)
+      - run: uv run pytest
+        if: hashFiles('tests/**/*.py') != '' # ponytail: drop the guard once T1.9 (#15) adds tests
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks scans full history
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

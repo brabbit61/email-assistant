@@ -80,6 +80,23 @@ Grilled every tech-stack decision one-by-one, then scaffolded the repo: `pyproje
 
 **Scope change (2026-07-11, post-close):** Jenit reversed the "no CI" decision. Requirements + use cases posted as a comment on #6; `.github/workflows/ci.yml` added with two jobs: `checks` (uv sync --locked → ruff check → ruff format --check → entry-point smoke run → pytest once tests exist) and `secret-scan` (gitleaks over full history — insurance on the secrets-in-repo decision). CD stays pull-based and lands with Phase 5 (#21): the box pulls `main` on a timer; no self-hosted runners.
 
+---
+
+## Phase 1: Triage worker MVP
+
+### #7 — T1.1 Config & secrets loading
+**Status:** Closed
+
+Built `src/assistant/config.py` — the single place every later component reads config + secrets. Loads `config.toml` via stdlib `tomllib` and `secrets/.env` via a ~8-line stdlib KEY=VALUE parser (no python-dotenv, per #6). Returns a frozen `Config` (resolved paths for client_secret.json / token.json / data/triage.db, model ids, budget caps, poll interval, digest times) holding a frozen `Secrets`. Added committable `.env.example` at repo root and `tests/test_config.py` (4 cases).
+
+**Decided (no sign-off required — implements T0.6):**
+- **Canonical secrets = 3 keys:** `EMAIL_ANTHROPIC_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`. Google OAuth is path-based (`secrets/client_secret.json`), not env — so the stale `EMAIL_GOOGLE_*` / `EMAIL_LANGSMITH_*` keys in the live `.env` are now **inert** (loader ignores unknown keys); can be hand-pruned anytime.
+- **Fail-loudly:** missing/empty required secret raises `ConfigError` naming the key; `config.toml` missing/malformed raises a clear `ConfigError` too.
+- **No value leaks structurally:** `Secrets.__repr__` masks all three values, so a secret can't reach a log/traceback even if the config is printed.
+- **Root resolution:** explicit `home=` arg (test seam) → `EMAIL_ASSISTANT_HOME` env (systemd/WSL2) → search upward from CWD for `config.toml`. Works from any subdirectory.
+
+**How it was verified:** `uv run pytest` → 4/4 green (valid load w/ quote+comment parsing and unknown-key tolerance, missing-secret names key without leaking a present value, masked repr, clear error on absent config.toml); ruff clean; live `load()` against the real repo printed the actual tunables, resolved db path, confirmed `client_secret.json` exists, loaded the real 108-char Anthropic key, and rendered `Secrets(...)` masked.
+
 ## Open / not yet started
 - #5 sign-off (hermes pin v2026.7.7.2, install layout, model config — comment posted on the issue)
-- Phase 1 tickets (#7–#17)
+- Phase 1 tickets #8–#17

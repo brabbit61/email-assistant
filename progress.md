@@ -97,6 +97,20 @@ Built `src/assistant/config.py` — the single place every later component reads
 
 **How it was verified:** `uv run pytest` → 4/4 green (valid load w/ quote+comment parsing and unknown-key tolerance, missing-secret names key without leaking a present value, masked repr, clear error on absent config.toml); ruff clean; live `load()` against the real repo printed the actual tunables, resolved db path, confirmed `client_secret.json` exists, loaded the real 108-char Anthropic key, and rendered `Secrets(...)` masked.
 
+### #8 — T1.2 SQLite schema
+**Status:** Closed
+
+Grilled the schema design one decision at a time (schema doc posted + approved on the issue before implementation, per the ticket). Built `src/assistant/store.py`: five tables + two views in `data/triage.db`, `PRAGMA user_version` migrations (no ORM), WAL + busy_timeout + foreign_keys pragmas, `now_iso()`/`new_id()` helpers, `open_db()`. Added `tests/test_store.py` (6 cases) and ADR 0001.
+
+**Decided (grilled):**
+- **Fully append-only / event-sourced.** Every table is INSERT-only; nothing is ever UPDATEd. Started from a mutable-status `actions` table and, after grilling, converted the whole schema to immutable event rows: `action_events` (intended→confirmed/failed) and `run_events` (started→finished), each correlated by a `uuid` (`action_id`/`run_id`) with autoincrement `event_id` as log position. Current state derived via `current_actions` / `current_checkpoint` views.
+- **Notable detour:** Jenit initially wanted Spark Structured Streaming for exactly-once idempotency. Grilled it down — exactly-once stops at the sink boundary (doesn't make Gmail/Telegram side effects once-only) and a JVM engine is unjustified at ~100 emails/day. Outcome: "take the model, drop the engine" — append-only in plain SQLite. (Saved as a durable memory.)
+- **Separate `llm_calls` cost ledger** (not cost columns on classifications) so agent digest/chat/draft calls are captured — deliberate divergence from the ticket wording, recorded in ADR 0001.
+- Self-describing event rows; `run_id` a logical uuid ref (not a hard FK); category/priority free-text validated in Python; timestamps UTC ISO-8601; `cost_usd` stored at call time.
+- Also bounded `uv_build` in `pyproject.toml` (`>=0.11,<0.12`) to silence the build warning.
+
+**How it was verified:** `uv run pytest` → 10/10 green (schema+views created, user_version==1, WAL + foreign_keys on, migration idempotent, action intended→confirmed derives one `current_actions` row = confirmed, `current_checkpoint` picks latest ok finish, FK violation raises). ruff clean. Live `open_db(config.db_path)` created `data/triage.db` at version 1 with all 5 tables + 2 views (stray runtime db then removed; it's gitignored).
+
 ## Open / not yet started
 - #5 sign-off (hermes pin v2026.7.7.2, install layout, model config — comment posted on the issue)
-- Phase 1 tickets #8–#17
+- Phase 1 tickets #9–#17

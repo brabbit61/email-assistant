@@ -7,7 +7,7 @@ import pytest
 from assistant.store import SCHEMA_VERSION, new_id, now_iso, open_db
 
 TABLES = {"messages", "llm_calls", "classifications", "action_events", "run_events"}
-VIEWS = {"current_actions", "current_checkpoint"}
+VIEWS = {"current_actions", "current_checkpoint", "current_classifications"}
 
 
 def _add_message(conn, mid="m1"):

@@ -43,6 +43,7 @@ def test_load_valid(tmp_path):
     cfg = load(home=root)
     assert cfg.classifier_model == "claude-haiku-4-5-20251001"
     assert cfg.poll_interval_minutes == 5
+    assert cfg.auto_archive_low_value is False  # absent in CONFIG_TOML -> default
     assert cfg.digest_times == ("07:00", "13:00", "20:00")
     assert cfg.secrets.telegram_token == SECRET_TOKEN  # quotes/comments parsed
     assert cfg.db_path == root / "data" / "triage.db"

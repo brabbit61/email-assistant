@@ -1,6 +1,314 @@
-"""The `assistant` CLI entry point."""
+"""The `assistant` CLI: `run [--dry-run]`, `status`, `audit [--since]`, `costs
+[--month]` (T1.8, issue #14).
+
+The seam between the deterministic worker and everything else: hermes runs these
+subcommands verbatim (no MCP server, no RPC), cron/systemd read the exit code,
+Jenit reads the stdout. `run` composes poll -> classify -> apply into one pass;
+`status`/`audit`/`costs` are read-only reports over the same SQLite log so
+nobody has to open the DB by hand. Plain tabular text only — no machine-readable
+flag yet (added if Phase 2 hermes work shows a real need, per the ticket).
+"""
+
+from __future__ import annotations
+
+import argparse
+import sqlite3
+import sys
+from datetime import datetime, timedelta, timezone
+
+from assistant import apply, classify, config, gmail, poll, store
+from assistant.classify import UNCLASSIFIED, Email
+
+# --- run ---------------------------------------------------------------------
+
+
+def _messages_needing_classification(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """New messages, plus any whose latest classification is still UNCLASSIFIED —
+    the retry behavior classify.py's own docstring promises."""
+    return conn.execute(
+        "SELECT m.gmail_message_id, m.sender, m.subject, m.body FROM messages m "
+        "LEFT JOIN current_classifications c "
+        "  ON c.gmail_message_id = m.gmail_message_id "
+        "WHERE c.gmail_message_id IS NULL OR c.category = ?",
+        (UNCLASSIFIED,),
+    ).fetchall()
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    svc = gmail.service(gmail.get_credentials(cfg))
+    client = classify.make_client(cfg.secrets.anthropic_api_key)
+
+    run_id = store.new_id()
+    conn.execute(
+        "INSERT INTO run_events(run_id, phase, status, recorded_at) "
+        "VALUES (?, 'triage', 'started', ?)",
+        (run_id, store.now_iso()),
+    )
+    conn.commit()
+
+    poll_result = poll.poll_once(conn, svc)
+
+    lines: list[str] = []
+    labeled = 0
+    errors = 0
+    rows = _messages_needing_classification(conn)
+    for row in rows:
+        verdict, usage = classify.classify(
+            client,
+            cfg.classifier_model,
+            Email(row["sender"], row["subject"], row["body"]),
+        )
+        classify.record(conn, row["gmail_message_id"], verdict, usage, actor="worker")
+        if verdict.category == UNCLASSIFIED:
+            continue
+        try:
+            result = apply.apply_verdict(
+                conn,
+                svc,
+                run_id,
+                row["gmail_message_id"],
+                verdict,
+                actor="worker",
+                auto_archive=cfg.auto_archive_low_value,
+                dry_run=args.dry_run,
+            )
+        except Exception as e:  # one poisoned message must not abort the batch
+            errors += 1
+            lines.append(f"  ERROR    {row['gmail_message_id']}  {e}")
+            continue
+        labeled += 1
+        tag = " ".join(name.split("/", 1)[1] for name in result.labels)
+        subject = (row["subject"] or "(no subject)")[:50]
+        lines.append(f"  {row['gmail_message_id']:<16}  {tag:<28}  {subject}")
+
+    status = "ok" if errors == 0 else "error"
+    conn.execute(
+        "INSERT INTO run_events"
+        "(run_id, phase, status, messages_seen, actions_taken, error_count, "
+        " recorded_at) VALUES (?, 'triage', ?, ?, ?, ?, ?)",
+        (
+            run_id,
+            status,
+            poll_result.messages_seen,
+            labeled,
+            errors,
+            store.now_iso(),
+        ),
+    )
+    conn.commit()
+
+    print(
+        f"Poll: {poll_result.messages_seen} new messages "
+        f"(historyId {poll_result.history_id})"
+    )
+    still_unclassified = len(rows) - labeled - errors  # verdict came back UNCLASSIFIED
+    print(f"Classified: {len(rows)} ({still_unclassified} unclassified)")
+    if lines:
+        verb = "Would label" if args.dry_run else "Labeled"
+        print(f"{verb} {labeled} message(s):")
+        print("\n".join(lines))
+    suffix = " [DRY RUN — nothing written to Gmail]" if args.dry_run else ""
+    print(f"{errors} error(s).{suffix}")
+    return 1 if errors else 0
+
+
+# --- status --------------------------------------------------------------------
+
+
+def _age(recorded_at: str) -> str:
+    then = datetime.strptime(recorded_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc
+    )
+    seconds = (datetime.now(timezone.utc) - then).total_seconds()
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m ago"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h ago"
+    return f"{int(seconds // 86400)}d ago"
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+
+    ckpt = conn.execute(
+        "SELECT history_id, recorded_at FROM current_checkpoint"
+    ).fetchone()
+    last_run = conn.execute(
+        "SELECT status, messages_seen, actions_taken, error_count, recorded_at "
+        "FROM run_events WHERE phase='triage' AND status IS NOT NULL "
+        "ORDER BY event_id DESC LIMIT 1"
+    ).fetchone()
+    unclassified = conn.execute(
+        "SELECT COUNT(*) FROM current_classifications WHERE category = ?",
+        (UNCLASSIFIED,),
+    ).fetchone()[0]
+    unconfirmed = conn.execute(
+        "SELECT COUNT(*) FROM current_actions WHERE status = 'intended'"
+    ).fetchone()[0]
+    db_size = cfg.db_path.stat().st_size / 1024 if cfg.db_path.exists() else 0.0
+
+    if ckpt:
+        print(
+            f"Checkpoint:   historyId {ckpt['history_id']}, {_age(ckpt['recorded_at'])}"
+        )
+    else:
+        print("Checkpoint:   none — worker has never run")
+    if last_run:
+        print(
+            f"Last run:     {last_run['status']} — {last_run['messages_seen']} "
+            f"messages, {last_run['actions_taken']} actions, "
+            f"{last_run['error_count']} errors ({_age(last_run['recorded_at'])})"
+        )
+    else:
+        print("Last run:     never")
+    print(f"Unclassified: {unclassified} message(s) awaiting retry")
+    print(
+        f"Unconfirmed:  {unconfirmed} action(s)"
+        + (" — crash recovery needed" if unconfirmed else "")
+    )
+    print(f"Database:     {cfg.db_path}, {db_size:.1f} KB")
+
+    healthy = (
+        ckpt is not None
+        and (last_run is None or last_run["status"] == "ok")
+        and unconfirmed == 0
+    )
+    return 0 if healthy else 1
+
+
+# --- audit -----------------------------------------------------------------
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    since = args.since or (datetime.now(timezone.utc) - timedelta(days=7)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    rows = conn.execute(
+        "SELECT ae.recorded_at, ae.status, ae.action_type, ae.gmail_message_id, "
+        "       ae.detail, ae.error, cc.reasoning "
+        "FROM action_events ae "
+        "LEFT JOIN current_classifications cc "
+        "  ON cc.gmail_message_id = ae.gmail_message_id "
+        "WHERE ae.recorded_at >= ? ORDER BY ae.recorded_at",
+        (since,),
+    ).fetchall()
+
+    counts = {"confirmed": 0, "failed": 0, "intended": 0}
+    for r in rows:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+        note = r["error"] or r["reasoning"] or ""
+        print(
+            f"{r['recorded_at']}  {r['status']:<9} {r['action_type']:<10} "
+            f"{r['gmail_message_id']:<16}  {r['detail']:<28}  {note}"
+        )
+    print(
+        f"{len(rows)} action(s) since {since} "
+        f"({counts['confirmed']} confirmed, {counts['failed']} failed, "
+        f"{counts['intended']} pending)"
+    )
+    return 0
+
+
+# --- costs -------------------------------------------------------------------
+
+
+def cmd_costs(args: argparse.Namespace) -> int:
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    month = args.month or datetime.now(timezone.utc).strftime("%Y-%m")
+    like = f"{month}%"
+
+    total = (
+        conn.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0) FROM llm_calls WHERE created_at LIKE ?",
+            (like,),
+        ).fetchone()[0]
+        or 0.0
+    )
+    pct = (total / cfg.monthly_usd_cap * 100) if cfg.monthly_usd_cap else 0.0
+    print(
+        f"{month} — ${total:.2f} of ${cfg.monthly_usd_cap:.2f} monthly cap ({pct:.0f}%)"
+    )
+
+    by_purpose = conn.execute(
+        "SELECT purpose, actor, model, COUNT(*) AS calls, SUM(cost_usd) AS cost "
+        "FROM llm_calls WHERE created_at LIKE ? "
+        "GROUP BY purpose, actor, model ORDER BY cost DESC",
+        (like,),
+    ).fetchall()
+    for r in by_purpose:
+        print(
+            f"  {r['purpose']:<10} {r['actor']:<8} {r['calls']:>4} calls   "
+            f"${r['cost']:.2f}   {r['model']}"
+        )
+
+    days_seen = conn.execute(
+        "SELECT COUNT(DISTINCT substr(created_at, 1, 10)) FROM llm_calls "
+        "WHERE created_at LIKE ?",
+        (like,),
+    ).fetchone()[0]
+    if days_seen:
+        print(
+            f"Daily average: ${total / days_seen:.2f}/day (soft cap ${cfg.daily_usd_soft_cap:.2f}/day)"
+        )
+
+    daily = conn.execute(
+        "SELECT substr(created_at, 1, 10) AS day, SUM(cost_usd) AS cost "
+        "FROM llm_calls WHERE created_at LIKE ? GROUP BY day ORDER BY day",
+        (like,),
+    ).fetchall()
+    if daily:
+        print("By day:")
+        for r in daily:
+            print(f"  {r['day']}   ${r['cost']:.2f}")
+    return 0
+
+
+# --- entry point ---------------------------------------------------------------
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="assistant")
+    sub = parser.add_subparsers(dest="command")
+
+    p_run = sub.add_parser("run", help="one poll -> classify -> apply pass")
+    p_run.add_argument("--dry-run", action="store_true")
+    p_run.set_defaults(func=cmd_run)
+
+    p_status = sub.add_parser("status", help="checkpoint age, last run, health")
+    p_status.set_defaults(func=cmd_status)
+
+    p_audit = sub.add_parser("audit", help="chronological actions with reasoning")
+    p_audit.add_argument("--since", default=None, help="ISO-8601 timestamp/date")
+    p_audit.set_defaults(func=cmd_audit)
+
+    p_costs = sub.add_parser("costs", help="spend by model/component vs budget cap")
+    p_costs.add_argument("--month", default=None, help="YYYY-MM, default current month")
+    p_costs.set_defaults(func=cmd_costs)
+
+    return parser
 
 
 def main() -> None:
-    # ponytail: stub so `uv run assistant` verifies the bootstrap; subcommands land in T1.8 (#14)
-    print("assistant: scaffolding only — subcommands arrive with Phase 1 (issue #14)")
+    parser = _build_parser()
+    args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        sys.exit(0)
+    try:
+        sys.exit(args.func(args))
+    except (config.ConfigError, gmail.AuthError) as e:
+        print(f"{type(e).__name__}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

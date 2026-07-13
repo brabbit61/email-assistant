@@ -43,6 +43,7 @@ def _config(tmp_path):
         agent_model="m",
         monthly_usd_cap=1.0,
         daily_usd_soft_cap=1.0,
+        auto_archive_low_value=False,
         poll_interval_minutes=5,
         digest_times=("07:00",),
         secrets=Secrets("a", "b", "c"),

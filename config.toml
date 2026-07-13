@@ -10,6 +10,7 @@ daily_usd_soft_cap = 0.75 # worker-enforced from Phase 2
 
 [triage]
 poll_interval_minutes = 5
+auto_archive_low_value = false # Phase 3 flips this on after the T1.11 go-live decision
 
 [digest]
 times = ["07:00", "13:00", "20:00"]

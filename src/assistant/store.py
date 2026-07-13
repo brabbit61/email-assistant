@@ -113,6 +113,14 @@ _MIGRATIONS: list[str] = [
         ORDER BY event_id DESC
         LIMIT 1;
     """,
+    """
+    CREATE VIEW current_classifications AS
+        SELECT c.* FROM classifications c
+        WHERE c.id = (
+            SELECT MAX(c2.id) FROM classifications c2
+            WHERE c2.gmail_message_id = c.gmail_message_id
+        );
+    """,
 ]
 
 

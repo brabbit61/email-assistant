@@ -75,6 +75,10 @@ LABELS = _specs(_CATEGORY_SPECS, "labelShow") + _specs(
     _PRIORITY_SPECS, "labelShowIfUnread"
 )
 
+FULL_NAME = {
+    spec.key: spec.full_name for spec in LABELS
+}  # taxonomy key -> "Assistant/..."
+
 
 @dataclass
 class ReconcileResult:
@@ -101,6 +105,14 @@ def _matches(existing: dict, spec: LabelSpec) -> bool:
         and color.get("backgroundColor") == spec.bg
         and color.get("textColor") == spec.text
     )
+
+
+def label_ids(svc: Resource) -> dict[str, str]:
+    """Live full_name -> id lookup, no create/patch. The applier (T1.7) calls this
+    at the start of each run; labels are assumed already reconciled (T1.4)."""
+    existing = svc.users().labels().list(userId="me").execute().get("labels", [])
+    names = {spec.full_name for spec in LABELS}
+    return {label["name"]: label["id"] for label in existing if label["name"] in names}
 
 
 def reconcile(svc: Resource) -> ReconcileResult:

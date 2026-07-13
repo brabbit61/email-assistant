@@ -108,6 +108,17 @@ def test_api_error_is_unclassified():
     assert usage.input_tokens == 0
 
 
+def test_malformed_response_is_unclassified():
+    # Structured output can't be forced to break from a real API, so this
+    # parse-failure branch (#15) is only reachable with a fake client.
+    client = _FakeClient(lambda _kw: _Resp("not json at all"))
+    verdict, usage = classify.classify(client, MODEL, classify.Email("a", "b", "c"))
+    assert verdict.category == classify.UNCLASSIFIED
+    assert verdict.priority is None
+    assert "malformed_response" in verdict.reasoning
+    assert usage.input_tokens == 10  # usage still recorded — unlike the API-error path
+
+
 def test_off_taxonomy_persists_as_unclassified():
     conn = _fresh_db()
     client = _FakeClient(

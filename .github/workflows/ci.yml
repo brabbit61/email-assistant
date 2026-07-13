@@ -23,4 +23,3 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run assistant # entry point resolves on a cold clone (UC2)
       - run: uv run pytest
-        if: hashFiles('tests/**/*.py') != '' # ponytail: drop the guard once T1.9 (#15) adds tests

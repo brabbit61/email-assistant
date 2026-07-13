@@ -32,6 +32,10 @@ tie-break rules decide. Never invent a label.
   person).
 - If it needs your action by a deadline, **Action-Needed** overrides the topical
   category.
+- A marketing/promotional deadline (a sale ending, early-bird pricing, a "last
+  chance" subject line) is *not* a real deadline. Action-Needed needs an
+  obligation you actually owe; a newsletter that merely names a sale deadline
+  stays **Newsletters** (P3-FYI).
 
 ## Priority (assign to every email)
 

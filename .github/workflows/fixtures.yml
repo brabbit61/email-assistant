@@ -1,0 +1,18 @@
+# Real-API classifier fixtures (T1.9, #15). Manual-only: paid Haiku calls, ~$0.03/run.
+# Needs the EMAIL_ANTHROPIC_API_KEY repo secret (Settings > Secrets > Actions);
+# without it the fixtures skip green.
+name: Classifier fixtures
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5 # reads .python-version, installs 3.13
+      - run: uv sync --locked
+      - run: uv run pytest -m fixtures
+        env:
+          EMAIL_ANTHROPIC_API_KEY: ${{ secrets.EMAIL_ANTHROPIC_API_KEY }}

@@ -56,3 +56,5 @@ echo
 systemctl --user list-timers assistant.timer --no-pager || true
 echo
 echo "Done. Logs: journalctl --user -u assistant.service -f"
+echo "Worker is in DRY-RUN trial mode (config.toml [triage] dry_run = true): it"
+echo "classifies but never writes to Gmail. Go live per deploy/go-live.md."

@@ -44,6 +44,7 @@ class Config:
     monthly_usd_cap: float
     daily_usd_soft_cap: float
     poll_interval_minutes: int
+    dry_run: bool
     auto_archive_low_value: bool
     digest_times: tuple[str, ...]
     secrets: Secrets
@@ -89,6 +90,7 @@ def load(home: Path | None = None) -> Config:
         monthly_cap = float(data["budget"]["monthly_usd_cap"])
         daily_cap = float(data["budget"]["daily_usd_soft_cap"])
         poll = int(data["triage"]["poll_interval_minutes"])
+        dry_run = bool(data["triage"].get("dry_run", True))  # default safe (gate)
         auto_archive = bool(data["triage"].get("auto_archive_low_value", False))
         digest_times = tuple(data["digest"]["times"])
     except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError, ValueError) as e:
@@ -118,6 +120,7 @@ def load(home: Path | None = None) -> Config:
         monthly_usd_cap=monthly_cap,
         daily_usd_soft_cap=daily_cap,
         poll_interval_minutes=poll,
+        dry_run=dry_run,
         auto_archive_low_value=auto_archive,
         digest_times=digest_times,
         secrets=Secrets(

@@ -1,5 +1,5 @@
-"""The `assistant` CLI: `run [--dry-run]`, `status`, `audit [--since]`, `costs
-[--month]` (T1.8, issue #14).
+"""The `assistant` CLI: `run [--dry-run]`, `status`, `audit [--since]`, `review
+[--since]`, `costs [--month]` (T1.8 issue #14; `review` added in T1.11 issue #17).
 
 The seam between the deterministic worker and everything else: hermes runs these
 subcommands verbatim (no MCP server, no RPC), cron/systemd read the exit code,
@@ -36,6 +36,9 @@ def _messages_needing_classification(conn: sqlite3.Connection) -> list[sqlite3.R
 
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = config.load()
+    # config `dry_run` is the go-live gate the unattended timer obeys; --dry-run
+    # force-dries a single manual invocation. Either one suppresses every write.
+    dry = args.dry_run or cfg.dry_run
     conn = store.open_db(cfg.db_path)
     svc = gmail.service(gmail.get_credentials(cfg))
     client = classify.make_client(cfg.secrets.anthropic_api_key)
@@ -72,14 +75,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                 verdict,
                 actor="worker",
                 auto_archive=cfg.auto_archive_low_value,
-                dry_run=args.dry_run,
+                dry_run=dry,
             )
         except Exception as e:  # one poisoned message must not abort the batch
             errors += 1
             lines.append(f"  ERROR    {row['gmail_message_id']}  {e}")
             continue
         labeled += 1
-        tag = " ".join(name.split("/", 1)[1] for name in result.labels)
+        tag = " ".join(result.labels)
         subject = (row["subject"] or "(no subject)")[:50]
         lines.append(f"  {row['gmail_message_id']:<16}  {tag:<28}  {subject}")
 
@@ -106,10 +109,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     still_unclassified = len(rows) - labeled - errors  # verdict came back UNCLASSIFIED
     print(f"Classified: {len(rows)} ({still_unclassified} unclassified)")
     if lines:
-        verb = "Would label" if args.dry_run else "Labeled"
+        verb = "Would label" if dry else "Labeled"
         print(f"{verb} {labeled} message(s):")
         print("\n".join(lines))
-    suffix = " [DRY RUN — nothing written to Gmail]" if args.dry_run else ""
+    if dry:
+        gate = (
+            " (config gate — flip [triage] dry_run to go live)" if cfg.dry_run else ""
+        )
+        suffix = f" [DRY RUN — nothing written to Gmail]{gate}"
+    else:
+        suffix = ""
     print(f"{errors} error(s).{suffix}")
     return 1 if errors else 0
 
@@ -220,6 +229,39 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- review ------------------------------------------------------------------
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    """Classifier verdicts for eyeball spot-checking during the dry-run trial —
+    where `audit` is empty because dry runs write no action_events (T1.11)."""
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    since = args.since or (datetime.now(timezone.utc) - timedelta(days=7)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    rows = conn.execute(
+        "SELECT cc.classified_at, cc.category, cc.priority, cc.reasoning, "
+        "       m.sender, m.subject "
+        "FROM current_classifications cc "
+        "JOIN messages m ON m.gmail_message_id = cc.gmail_message_id "
+        "WHERE cc.classified_at >= ? ORDER BY cc.classified_at",
+        (since,),
+    ).fetchall()
+
+    for r in rows:
+        label = r["category"] + (f"/{r['priority']}" if r["priority"] else "")
+        sender = (r["sender"] or "")[:24]
+        subject = (r["subject"] or "(no subject)")[:40]
+        print(
+            f"{r['classified_at']}  {label:<24} {sender:<24}  {subject:<40}  "
+            f"{r['reasoning'] or ''}"
+        )
+    print(f"{len(rows)} classification(s) since {since}")
+    return 0
+
+
 # --- costs -------------------------------------------------------------------
 
 
@@ -293,6 +335,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_audit = sub.add_parser("audit", help="chronological actions with reasoning")
     p_audit.add_argument("--since", default=None, help="ISO-8601 timestamp/date")
     p_audit.set_defaults(func=cmd_audit)
+
+    p_review = sub.add_parser("review", help="classifier verdicts for spot-checking")
+    p_review.add_argument("--since", default=None, help="ISO-8601 timestamp/date")
+    p_review.set_defaults(func=cmd_review)
 
     p_costs = sub.add_parser("costs", help="spend by model/component vs budget cap")
     p_costs.add_argument("--month", default=None, help="YYYY-MM, default current month")

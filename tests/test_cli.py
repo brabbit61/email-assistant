@@ -27,10 +27,14 @@ daily_usd_soft_cap = 0.75
 
 [triage]
 poll_interval_minutes = 5
+dry_run = false
 
 [digest]
 times = ["07:00", "13:00", "20:00"]
 """
+
+# Same, but the go-live gate still closed (dry-run trial mode).
+CONFIG_TOML_GATE = CONFIG_TOML.replace("dry_run = false", "dry_run = true")
 
 
 class _ListExec:
@@ -74,8 +78,8 @@ class FakeService:
         return _ModifyExec(self.calls, id, body, id in self._fail_ids)
 
 
-def _make_repo(tmp_path):
-    (tmp_path / "config.toml").write_text(CONFIG_TOML)
+def _make_repo(tmp_path, config_toml=CONFIG_TOML):
+    (tmp_path / "config.toml").write_text(config_toml)
     secrets = tmp_path / "secrets"
     secrets.mkdir()
     (secrets / ".env").write_text(
@@ -183,6 +187,69 @@ def test_run_dry_run_records_cost_but_writes_no_gmail_mutations(
     assert svc.calls == []
     assert conn.execute("SELECT COUNT(*) FROM action_events").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0] == 1
+
+
+def test_config_gate_dries_run_without_the_flag(tmp_path, monkeypatch, capsys):
+    """dry_run=true in config suppresses writes even when --dry-run is absent —
+    the go-live gate the unattended timer obeys (T1.11)."""
+    root = _make_repo(tmp_path, CONFIG_TOML_GATE)
+    svc = FakeService()
+    _patch_run(
+        monkeypatch,
+        root,
+        svc,
+        [
+            (
+                Verdict("Finance", None, "bill due"),
+                Usage("claude-haiku-4-5-20251001", 10, 5),
+            )
+        ],
+        poll_result=RunResult(1, 1, False, "200"),
+    )
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_messages(conn, ["m1"])
+
+    code = cli.cmd_run(
+        argparse.Namespace(dry_run=False)
+    )  # no CLI flag, gate still dries
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Would label 1 message(s)" in out
+    assert "config gate" in out  # tells the operator why it's dry
+    assert svc.calls == []  # nothing written to Gmail
+    assert conn.execute("SELECT COUNT(*) FROM action_events").fetchone()[0] == 0
+    # ...but the verdict is still recorded, so `review` can spot-check it
+    assert (
+        conn.execute(
+            "SELECT category FROM current_classifications WHERE gmail_message_id='m1'"
+        ).fetchone()["category"]
+        == "Finance"
+    )
+
+
+def test_review_lists_classifications_with_reasoning_and_since_filter(
+    tmp_path, monkeypatch, capsys
+):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_messages(conn, ["m1"])
+    conn.execute(
+        "INSERT INTO classifications(gmail_message_id, category, priority, reasoning, "
+        "classified_at) VALUES ('m1', 'Finance', 'P2-This-Week', 'autopay due 07/18', ?)",
+        (store.now_iso(),),
+    )
+    conn.commit()
+
+    code = cli.cmd_review(argparse.Namespace(since="2020-01-01T00:00:00Z"))
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Finance/P2-This-Week" in out
+    assert "autopay due 07/18" in out  # reasoning surfaced for eyeballing
+    assert "subj m1" in out  # subject from the joined messages row
+    assert "1 classification(s) since 2020-01-01T00:00:00Z" in out
 
 
 def test_run_retries_previously_unclassified_messages(tmp_path, monkeypatch):
@@ -312,7 +379,7 @@ def test_audit_prints_actions_with_reasoning_and_since_filter(
     conn.execute(
         "INSERT INTO action_events(action_id, status, action_type, actor, "
         "gmail_message_id, detail, recorded_at) VALUES "
-        "('a1','confirmed','label_add','worker','m1','Assistant/\N{MONEY BAG} Finance',?)",
+        "('a1','confirmed','label_add','worker','m1','\N{MONEY BAG} Finance',?)",
         (store.now_iso(),),
     )
     conn.commit()

@@ -113,7 +113,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"{verb} {labeled} message(s):")
         print("\n".join(lines))
     if dry:
-        gate = " (config gate — flip [triage] dry_run to go live)" if cfg.dry_run else ""
+        gate = (
+            " (config gate — flip [triage] dry_run to go live)" if cfg.dry_run else ""
+        )
         suffix = f" [DRY RUN — nothing written to Gmail]{gate}"
     else:
         suffix = ""

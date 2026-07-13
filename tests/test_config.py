@@ -81,7 +81,9 @@ def test_dry_run_explicit_false_parses(tmp_path):
         'EMAIL_ANTHROPIC_API_KEY="sk-ant-abc"\n'
         f"TELEGRAM_TOKEN={SECRET_TOKEN}\nTELEGRAM_CHAT_ID=123456\n",
     )
-    (root / "config.toml").write_text(CONFIG_TOML.replace("[triage]", "[triage]\ndry_run = false"))
+    (root / "config.toml").write_text(
+        CONFIG_TOML.replace("[triage]", "[triage]\ndry_run = false")
+    )
     assert load(home=root).dry_run is False  # explicit false = gone live
 
 

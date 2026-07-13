@@ -198,13 +198,20 @@ def test_config_gate_dries_run_without_the_flag(tmp_path, monkeypatch, capsys):
         monkeypatch,
         root,
         svc,
-        [(Verdict("Finance", None, "bill due"), Usage("claude-haiku-4-5-20251001", 10, 5))],
+        [
+            (
+                Verdict("Finance", None, "bill due"),
+                Usage("claude-haiku-4-5-20251001", 10, 5),
+            )
+        ],
         poll_result=RunResult(1, 1, False, "200"),
     )
     conn = store.open_db(root / "data" / "triage.db")
     _seed_messages(conn, ["m1"])
 
-    code = cli.cmd_run(argparse.Namespace(dry_run=False))  # no CLI flag, gate still dries
+    code = cli.cmd_run(
+        argparse.Namespace(dry_run=False)
+    )  # no CLI flag, gate still dries
 
     assert code == 0
     out = capsys.readouterr().out
@@ -213,9 +220,12 @@ def test_config_gate_dries_run_without_the_flag(tmp_path, monkeypatch, capsys):
     assert svc.calls == []  # nothing written to Gmail
     assert conn.execute("SELECT COUNT(*) FROM action_events").fetchone()[0] == 0
     # ...but the verdict is still recorded, so `review` can spot-check it
-    assert conn.execute(
-        "SELECT category FROM current_classifications WHERE gmail_message_id='m1'"
-    ).fetchone()["category"] == "Finance"
+    assert (
+        conn.execute(
+            "SELECT category FROM current_classifications WHERE gmail_message_id='m1'"
+        ).fetchone()["category"]
+        == "Finance"
+    )
 
 
 def test_review_lists_classifications_with_reasoning_and_since_filter(

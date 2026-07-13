@@ -28,6 +28,14 @@ rm secrets/token.json && uv run python -m assistant.gmail
 
 A permanently unrefreshable token makes the unattended worker fail loudly (records an `auth`/`error` event and exits nonzero), never hang.
 
+## Taxonomy labels
+
+Idempotent — creates the fixed taxonomy (11 categories + 3 priorities, nested under one collapsible `Assistant` label) in Gmail, or reconciles any drift. Safe to run repeatedly:
+
+```sh
+uv run python -m assistant.labels
+```
+
 ## Layout
 
 ```

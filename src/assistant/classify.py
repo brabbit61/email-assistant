@@ -83,7 +83,9 @@ def make_client(api_key: str) -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=api_key)
 
 
-def classify(client: anthropic.Anthropic, model: str, email: Email) -> tuple[Verdict, Usage]:
+def classify(
+    client: anthropic.Anthropic, model: str, email: Email
+) -> tuple[Verdict, Usage]:
     """One classification attempt. Never raises: any failure — API outage,
     oversized context, malformed response — becomes an UNCLASSIFIED verdict that
     surfaces in `status` for a later retry."""
@@ -97,7 +99,9 @@ def classify(client: anthropic.Anthropic, model: str, email: Email) -> tuple[Ver
             output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
         )
     except Exception as e:  # noqa: BLE001 — never crash the worker on one email
-        return Verdict(UNCLASSIFIED, None, f"api_error: {type(e).__name__}"), Usage(model, 0, 0)
+        return Verdict(UNCLASSIFIED, None, f"api_error: {type(e).__name__}"), Usage(
+            model, 0, 0
+        )
 
     usage = Usage(model, resp.usage.input_tokens, resp.usage.output_tokens)
     try:
@@ -105,7 +109,9 @@ def classify(client: anthropic.Anthropic, model: str, email: Email) -> tuple[Ver
         data = json.loads(text)
         return Verdict(data["category"], data["priority"], data["reasoning"]), usage
     except (StopIteration, json.JSONDecodeError, KeyError, TypeError) as e:
-        return Verdict(UNCLASSIFIED, None, f"malformed_response: {type(e).__name__}"), usage
+        return Verdict(
+            UNCLASSIFIED, None, f"malformed_response: {type(e).__name__}"
+        ), usage
 
 
 def record(
@@ -126,23 +132,44 @@ def record(
         "(actor, purpose, model, input_tokens, output_tokens, cost_usd, "
         " gmail_message_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
         (
-            actor, "classify", usage.model, usage.input_tokens, usage.output_tokens,
+            actor,
+            "classify",
+            usage.model,
+            usage.input_tokens,
+            usage.output_tokens,
             cost_usd(usage.model, usage.input_tokens, usage.output_tokens, batch),
-            gmail_message_id, now,
+            gmail_message_id,
+            now,
         ),
     )
     llm_call_id = cur.lastrowid
     try:
-        _insert_classification(conn, gmail_message_id, verdict.category,
-                               verdict.priority, verdict.reasoning, llm_call_id, now)
+        _insert_classification(
+            conn,
+            gmail_message_id,
+            verdict.category,
+            verdict.priority,
+            verdict.reasoning,
+            llm_call_id,
+            now,
+        )
     except sqlite3.IntegrityError:
-        _insert_classification(conn, gmail_message_id, UNCLASSIFIED, None,
-                               f"off_taxonomy: {verdict.category!r}", llm_call_id, now)
+        _insert_classification(
+            conn,
+            gmail_message_id,
+            UNCLASSIFIED,
+            None,
+            f"off_taxonomy: {verdict.category!r}",
+            llm_call_id,
+            now,
+        )
     conn.commit()
     return llm_call_id
 
 
-def _insert_classification(conn, gmail_message_id, category, priority, reasoning, llm_call_id, now):
+def _insert_classification(
+    conn, gmail_message_id, category, priority, reasoning, llm_call_id, now
+):
     conn.execute(
         "INSERT INTO classifications"
         "(gmail_message_id, category, priority, reasoning, llm_call_id, classified_at) "

@@ -23,6 +23,7 @@ def _fresh_db() -> sqlite3.Connection:
 
 # --- fake anthropic client -------------------------------------------------
 
+
 class _Block:
     type = "text"
 
@@ -59,6 +60,7 @@ class _FakeClient:
 
 # --- the CHECK constraint == labels.CATEGORIES + UNCLASSIFIED --------------
 
+
 def test_check_accepts_taxonomy_and_unclassified():
     conn = _fresh_db()
     for cat in [*CATEGORIES, "UNCLASSIFIED"]:
@@ -85,6 +87,7 @@ def test_check_rejects_off_taxonomy():
 
 # --- cost math -------------------------------------------------------------
 
+
 def test_cost_usd():
     assert abs(classify.cost_usd(MODEL, 1_000_000, 1_000_000) - 6.0) < 1e-9
     assert abs(classify.cost_usd(MODEL, 1_000_000, 1_000_000, batch=True) - 3.0) < 1e-9
@@ -92,11 +95,14 @@ def test_cost_usd():
 
 # --- failure paths ---------------------------------------------------------
 
+
 def test_api_error_is_unclassified():
     def boom(_kw):
         raise RuntimeError("outage")
 
-    verdict, usage = classify.classify(_FakeClient(boom), MODEL, classify.Email("a", "b", "c"))
+    verdict, usage = classify.classify(
+        _FakeClient(boom), MODEL, classify.Email("a", "b", "c")
+    )
     assert verdict.category == classify.UNCLASSIFIED
     assert verdict.priority is None
     assert usage.input_tokens == 0
@@ -118,12 +124,12 @@ def test_off_taxonomy_persists_as_unclassified():
 def test_happy_path_records_cost():
     conn = _fresh_db()
     client = _FakeClient(
-        lambda _kw: _Resp('{"category":"Orders","priority":"P3-FYI","reasoning":"shipped"}')
+        lambda _kw: _Resp(
+            '{"category":"Orders","priority":"P3-FYI","reasoning":"shipped"}'
+        )
     )
     verdict, usage = classify.classify(client, MODEL, classify.Email("a", "b", "c"))
     classify.record(conn, "m1", verdict, usage)
-    got = conn.execute(
-        "SELECT category, priority FROM classifications"
-    ).fetchone()
+    got = conn.execute("SELECT category, priority FROM classifications").fetchone()
     assert got["category"] == "Orders" and got["priority"] == "P3-FYI"
     assert conn.execute("SELECT cost_usd FROM llm_calls").fetchone()["cost_usd"] > 0

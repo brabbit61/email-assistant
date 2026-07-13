@@ -16,7 +16,14 @@ assistant = "assistant.cli:main"
 dev = [
     "ruff",
     "pytest",
+    "pyyaml",
 ]
+
+[tool.pytest.ini_options]
+# Real-API fixtures (#15) are paid + flaky; keep them out of the default run.
+# `pytest` excludes them; `pytest -m fixtures` (command-line -m wins) runs only them.
+addopts = "-m 'not fixtures'"
+markers = ["fixtures: real-API classifier fixtures (paid, opt-in; run with -m fixtures)"]
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]

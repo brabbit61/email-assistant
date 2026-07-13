@@ -1,0 +1,176 @@
+# Synthetic classifier fixtures (T1.9, #15). No real personal data.
+# Each entry drives one classify.Email; expected_priority is optional
+# (present only where the rubric makes priority deterministic).
+# Run: pytest -m fixtures  (see tests/test_fixtures.py).
+
+fixtures:
+  # --- one clear example per category ------------------------------------
+
+  - name: action-jury-summons
+    expected_category: Action-Needed
+    sender: Superior Court of Alameda County <jury@court.example.gov>
+    subject: Jury summons — response required by July 20
+    body: |
+      You have been summoned for jury service. You must confirm your
+      availability or request a one-time postponement no later than
+      July 20. Log in with your juror ID to respond. Failure to respond
+      may result in a fine.
+
+  - name: finance-dividend
+    expected_category: Finance
+    expected_priority: P3-FYI
+    sender: Vanguard <no-reply@statements.vanguard.example.com>
+    subject: A dividend was deposited to your brokerage account
+    body: |
+      A dividend payment of $42.10 has been deposited into your
+      brokerage account. Your updated monthly statement is now available
+      to view online. No action is needed.
+
+  - name: bills-electric
+    expected_category: Bills
+    sender: PG&E <billing@pge.example.com>
+    subject: Your electricity bill is ready — $84.20 due July 25
+    body: |
+      Your statement for service at 14 Maple St is ready. Amount due:
+      $84.20. Due date: July 25. Enroll in autopay to avoid missing a
+      payment.
+
+  - name: orders-shipped
+    expected_category: Orders
+    expected_priority: P3-FYI
+    sender: Amazon.com <ship-confirm@amazon.example.com>
+    subject: Your package has shipped
+    body: |
+      Good news — your order of "USB-C cable (2-pack)" has shipped and
+      is on its way. Tracking number 1Z999AA10123456784. Estimated
+      delivery: Thursday. No action needed.
+
+  - name: events-offsite-rsvp
+    expected_category: Events
+    sender: Priya Nair <priya@example.com>
+    subject: You're invited — team offsite, please RSVP by Friday
+    body: |
+      Hi! We're holding the Q3 team offsite next month at the lakeside
+      lodge. Please RSVP by Friday so we can finalize catering and
+      transport. Click yes/no in the invite below.
+
+  - name: travel-flight-itin
+    expected_category: Travel
+    sender: United Airlines <confirmation@united.example.com>
+    subject: Your flight confirmation — SFO to JFK, Aug 3
+    body: |
+      Thanks for booking with us. Confirmation code JKLM45. Flight
+      UA482, San Francisco (SFO) to New York (JFK), departing Aug 3 at
+      8:15 AM. Check-in opens 24 hours before departure.
+
+  - name: work-colleague-ask
+    expected_category: Work
+    sender: Daniel Okoro <daniel@example.com>
+    subject: Q3 numbers when you get a chance
+    body: |
+      Hey — no rush, but when you get a chance could you send over the
+      Q3 revenue numbers? I'm pulling together the board deck for next
+      week and want to make sure I've got the latest. Thanks!
+
+  - name: dev-ci-failed
+    expected_category: Dev
+    sender: GitHub Actions <notifications@github.example.com>
+    subject: Run failed — CI on main
+    body: |
+      Workflow CI failed for commit a4c7ae0 on branch main. Job "checks"
+      failed at step "uv run pytest". View the run logs for details.
+      This is an automated message.
+
+  - name: personal-friend
+    expected_category: Personal
+    sender: Sam <sam@example.com>
+    subject: dinner next week??
+    body: |
+      Hey stranger! It's been way too long. Are you free for dinner next
+      week — maybe that ramen place we kept meaning to try? Let me know
+      what night works, would love to catch up.
+
+  - name: newsletters-weekly
+    expected_category: Newsletters
+    expected_priority: P3-FYI
+    sender: PyCoder's Weekly <hello@pycoders.example.com>
+    subject: This Week in Python — 10 reads you'll like
+    body: |
+      Issue #642. This week: structural pattern matching in the wild,
+      a deep dive on asyncio task groups, and the 10 best articles we
+      found. You're receiving this because you subscribed. Unsubscribe
+      any time.
+
+  - name: lowvalue-promo
+    expected_category: Low-Value
+    expected_priority: P3-FYI
+    sender: MegaDeals <no-reply@megadeals.example.com>
+    subject: 🔥 50% OFF EVERYTHING — today only!
+    body: |
+      Our biggest sale of the year is HERE. Take 50% off sitewide — no
+      code needed. Shop now before it's gone! Unsubscribe. You are
+      receiving this promotional email as a valued shopper.
+
+  # --- tie-break / priority cases ---------------------------------------
+
+  - name: tiebreak-recruiter-cold
+    expected_category: Low-Value
+    sender: Jordan Ellis <jordan@talenthub.example.com>
+    subject: Exciting Senior Python Engineer role — a fit for you?
+    body: |
+      Hi, I'm Jordan, a technical recruiter at TalentHub. I came across
+      your profile and think you'd be a great fit for a Senior Python
+      Engineer role with one of my clients. Do you have 15 minutes this
+      week for a quick call? Looking forward to connecting!
+
+  - name: tiebreak-order-needs-action
+    expected_category: Action-Needed
+    sender: FedEx <tracking@fedex.example.com>
+    subject: Action required — confirm your delivery address within 48 hours
+    body: |
+      We attempted to deliver your package but the address could not be
+      verified. Please confirm or correct your delivery address within
+      48 hours or the package will be returned to sender. Confirm now
+      using the link below.
+
+  - name: tiebreak-human-tech
+    expected_category: Work
+    sender: Lena Fischer <lena@example.com>
+    subject: prod deploy is broken — can you take a look?
+    body: |
+      Hey, the 2pm deploy went out and the checkout service is throwing
+      500s in production. I've rolled back for now but can you dig into
+      what changed? I think it might be the payment client bump. Ping me
+      when you're online.
+
+  - name: tiebreak-newsletter-deadline
+    expected_category: Newsletters
+    expected_priority: P3-FYI
+    sender: PyConf <news@pyconf.example.com>
+    subject: ⏰ Early-bird pricing ends Friday!
+    body: |
+      Don't miss out — early-bird tickets for PyConf are 40% off, but
+      only until Friday. After that, prices go up. Grab your ticket now
+      and save. You're receiving this because you signed up for PyConf
+      updates. Unsubscribe.
+
+  - name: pri-bill-due-today
+    expected_category: Bills
+    expected_priority: P1-Urgent
+    sender: City Water Dept <billing@citywater.example.gov>
+    subject: FINAL NOTICE — your water bill is due TODAY
+    body: |
+      This is a final reminder that your water bill of $61.40 is due
+      TODAY. To avoid a late fee and possible service interruption,
+      please pay immediately using the link below.
+
+  - name: pri-flight-cancelled
+    expected_category: Travel
+    expected_priority: P1-Urgent
+    sender: Delta Air Lines <alerts@delta.example.com>
+    subject: Your flight DL1123 has been cancelled
+    body: |
+      We're sorry — your flight DL1123 scheduled for tomorrow morning
+      has been cancelled due to weather. You must rebook to secure a new
+      seat. Rebook now or call us; seats on alternate flights are
+      limited.

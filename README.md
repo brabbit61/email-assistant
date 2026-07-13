@@ -36,12 +36,35 @@ Idempotent — creates the fixed taxonomy (11 categories + 3 priorities, nested 
 uv run python -m assistant.labels
 ```
 
+## Running unattended
+
+A systemd **user** timer fires `assistant run` every 5 minutes. One idempotent script installs it:
+
+```sh
+./deploy/setup.sh          # uv sync, generate + enable the timer; safe to rerun
+```
+
+That yields a *running* timer. For it to do useful work, authorize Gmail (above) and fill
+`secrets/.env` first — otherwise every run fails loudly until they're present.
+
+```sh
+journalctl --user -u assistant.service -f            # live logs (-n 50 for recent)
+systemctl --user list-timers assistant.timer         # next/last fire
+systemctl --user status assistant.service            # last run's result
+systemctl --user stop assistant.timer                # pause / resume
+systemctl --user start assistant.timer
+systemctl --user disable --now assistant.timer       # stop and remove from boot
+```
+
+After changing dependencies or the units, just rerun `./deploy/setup.sh`. Missed windows
+(machine asleep) run **once** on wake, not once per skipped interval (`Persistent=true`).
+
 ## Layout
 
 ```
 src/assistant/   # the triage worker + `assistant` CLI (Phase 1)
 hermes/          # hermes skill + cron definitions (Phase 2)
-deploy/          # setup.sh + systemd units (Phase 1/5)
+deploy/          # setup.sh — generates + installs the systemd user units (Phase 1/5)
 config.toml      # non-secret tunables — committed
 secrets/         # credentials — gitignored, never committed
 data/            # runtime state (triage.db) — gitignored, created at runtime

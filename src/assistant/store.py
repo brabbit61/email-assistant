@@ -17,8 +17,6 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 1
-
 # One entry per schema version. Index i defines the migration from version i to
 # i+1. Append new entries here; never edit a shipped one.
 _MIGRATIONS: list[str] = [
@@ -113,7 +111,19 @@ _MIGRATIONS: list[str] = [
         ORDER BY event_id DESC
         LIMIT 1;
     """,
+    """
+    CREATE VIEW current_classifications AS
+        SELECT c.* FROM classifications c
+        WHERE c.id = (
+            SELECT MAX(c2.id) FROM classifications c2
+            WHERE c2.gmail_message_id = c.gmail_message_id
+        );
+    """,
 ]
+
+# Derived, not hardcoded: a literal constant here has twice drifted out of sync
+# with len(_MIGRATIONS) when a migration was appended without updating it too.
+SCHEMA_VERSION = len(_MIGRATIONS)
 
 
 def now_iso() -> str:

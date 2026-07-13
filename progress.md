@@ -111,6 +111,19 @@ Grilled the schema design one decision at a time (schema doc posted + approved o
 
 **How it was verified:** `uv run pytest` → 10/10 green (schema+views created, user_version==1, WAL + foreign_keys on, migration idempotent, action intended→confirmed derives one `current_actions` row = confirmed, `current_checkpoint` picks latest ok finish, FK violation raises). ruff clean. Live `open_db(config.db_path)` created `data/triage.db` at version 1 with all 5 tables + 2 views (stray runtime db then removed; it's gitignored).
 
+### #9 — T1.3 Gmail OAuth flow + token persistence/refresh
+**Status:** Closed
+
+Built `src/assistant/gmail.py`: one entry point `get_credentials(config, *, interactive=False)` over the desktop-app OAuth client (`gmail.modify` scope only). Loads `secrets/token.json` if present; returns it valid, silently refreshes it if expired (persisting the rotated token), runs the browser consent flow only when `interactive=True`. The documented auth command is `uv run python -m assistant.gmail`; re-auth = delete `token.json` and re-run. Added `tests/test_gmail.py` (6 cases, network/browser fully stubbed) and README "Gmail authorization" section. No sign-off decisions (implements #2).
+
+**Decided (no sign-off — implements #2/#7):**
+- **Non-interactive by default.** The unattended worker calls `get_credentials(config)` and never blocks on a browser: a valid/refreshable token returns silently, anything needing a human raises `AuthError`. Only the manual auth command passes `interactive=True`.
+- **Loud, not silent, on permanent failure.** A `RefreshError` (revoked / password change / dead refresh token) becomes `AuthError`; the auth command records an append-only `run_events` row (`phase='auth'`, `status='error'`, note) via the T1.2 store and exits nonzero — no new table, and it surfaces in `assistant status` (#14). Telegram alerting stays Phase 2.
+- **Token is a durable secret.** `token.json` written 0600 inside the already-0700 `secrets/` dir. Refreshed tokens are persisted back so rotation survives restarts.
+- **Store stays decoupled on the happy path.** `gmail.py` imports the DB lazily, only inside the failure-recording helper — auth doesn't touch SQLite when it succeeds.
+
+**How it was verified:** `uv run pytest` → 16/16 green (no-token non-interactive raises; valid token returned without refresh/flow; expired token refreshes + persists; permanent refresh failure raises `AuthError`; interactive first run persists 0600; failure recorded in `run_events`). ruff clean. The live browser flow itself is inherently interactive (Jenit runs it once) — not exercised in CI.
+
 ## Open / not yet started
 - #5 sign-off (hermes pin v2026.7.7.2, install layout, model config — comment posted on the issue)
-- Phase 1 tickets #9–#17
+- Phase 1 tickets #10–#17

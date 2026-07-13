@@ -12,6 +12,22 @@ uv run assistant # verify the entry point resolves
 uv run ruff check
 ```
 
+## Gmail authorization
+
+One-time, browser-based. Requires `secrets/client_secret.json` (T0.2) in place:
+
+```sh
+uv run python -m assistant.gmail   # opens browser consent, writes secrets/token.json
+```
+
+Subsequent runs are non-interactive — the stored token refreshes silently. **Re-auth** (revoked token, password change) is the same command after deleting the token:
+
+```sh
+rm secrets/token.json && uv run python -m assistant.gmail
+```
+
+A permanently unrefreshable token makes the unattended worker fail loudly (records an `auth`/`error` event and exits nonzero), never hang.
+
 ## Layout
 
 ```

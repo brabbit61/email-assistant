@@ -124,6 +124,22 @@ Built `src/assistant/gmail.py`: one entry point `get_credentials(config, *, inte
 
 **How it was verified:** `uv run pytest` → 16/16 green (no-token non-interactive raises; valid token returned without refresh/flow; expired token refreshes + persists; permanent refresh failure raises `AuthError`; interactive first run persists 0600; failure recorded in `run_events`). ruff clean. The live browser flow itself is inherently interactive (Jenit runs it once) — not exercised in CI.
 
+### #10 — T1.4 Create taxonomy labels in Gmail (idempotent)
+**Status:** Implemented, pending Jenit's visual sign-off (open)
+
+Grilled all three sign-off decisions. Built `src/assistant/labels.py`: one taxonomy definition (`CATEGORIES`/`PRIORITIES`, importable by the classifier #12), a `LabelSpec` per label (name, color, list visibility), and `reconcile(svc) -> ReconcileResult` — an idempotent upsert (`labels.list` once, then create-if-missing / patch-if-drifted / skip-if-matching). `main()` is `uv run python -m assistant.labels`, reusing the #9 auth path (non-interactive). Added a small `service(creds)` builder to `gmail.py` for reuse by later Gmail tickets. Added `tests/test_labels.py` (fake in-memory Gmail service, no network).
+
+**Decided (grilled):**
+- **Taxonomy widened 8 → 11 categories.** Added Work, Bills, Dev to fit Jenit's profile (data/ML engineer); rejected Receipts (folds into Orders/Bills), Health, Learning, Social, standalone Security as too thin to wall off. Updated PLAN.md's locked taxonomy row and issue #12 (classifier) to match.
+- **One collapsible parent (`Assistant`)**, not flat or two-parent — full names are `Assistant/<emoji> <name>`.
+- **Emoji on every label** (all 14), for mobile scannability where the color chip is small.
+- **Color grouped by family**, not full rainbow: priorities are traffic-light (red/amber/blue), Action-Needed is hot orange, the 11 categories are muted tones grouped by domain (money/logistics/people/machine) — so urgency pops and the sidebar doesn't shout.
+- **Priorities `labelShowIfUnread`**, categories always `labelShow` — priorities surface only when something in that bucket is unread; categories are a permanent nested list (already contained by the collapsible parent).
+- **No label-id table in the DB** (dropped from ticket scope) — the applier (#13/T1.7) resolves `name → id` live from `labels.list` at startup; Gmail stays the single source of truth, no staleness risk if a label is ever deleted/recreated.
+
+**How it was verified:** `uv run pytest` → 19/19 green (first reconcile creates all 15; second reconcile is fully idempotent — 0 created/updated; a drifted color patches only that one label). ruff clean. **Live:** ran `uv run python -m assistant.labels` against Jenit's real Gmail — first run created 14 labels (+ parent), second run reported 0 created / 0 updated / 14 unchanged; a follow-up `labels.list` readback confirmed all 15 names/colors/visibility match spec exactly. **Outstanding:** Jenit still needs to look at the sidebar (web + mobile) and confirm the labels are visually distinguishable before this closes — the one acceptance criterion that isn't a repo-side check.
+
 ## Open / not yet started
 - #5 sign-off (hermes pin v2026.7.7.2, install layout, model config — comment posted on the issue)
-- Phase 1 tickets #10–#17
+- #10 visual sign-off (Jenit to confirm labels look right in Gmail web + mobile)
+- Phase 1 tickets #11–#17

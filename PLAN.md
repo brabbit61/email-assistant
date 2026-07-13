@@ -11,7 +11,7 @@ Jenit's Gmail inbox is an unstructured mess. Goal: a personal email assistant he
 | LLM | Cloud API — Anthropic. Haiku 4.5 for per-email classification, Sonnet 5 for the hermes agent |
 | Gmail access | Gmail API + OAuth (desktop-app flow, `gmail.modify` scope; Gmail "folders" are labels) |
 | Autonomy | Auto: label/tag, archive low-value, create drafts. Never: send, delete, click links |
-| Taxonomy | Fixed set: Action-Needed, Events, Finance, Travel, Orders, Personal, Newsletters, Low-Value + P1/P2/P3 priority. Agent may not invent labels |
+| Taxonomy | Fixed set: Action-Needed, Events, Finance, Bills, Travel, Orders, Work, Personal, Dev, Newsletters, Low-Value + P1/P2/P3 priority. Agent may not invent labels. Gmail labels nest under one collapsible `Assistant` parent, emoji-prefixed, colors grouped by family (#10) |
 | Channel | **Telegram** (bot via BotFather — replaced WhatsApp after grilling; no Baileys ban risk, no spare number, real bot API) |
 | Notifications | Digests ~8am/1pm/7pm + immediate ping for P1-Urgent; fully two-way chat |
 | Architecture | **Deterministic pipeline + agent on top** (see below) |

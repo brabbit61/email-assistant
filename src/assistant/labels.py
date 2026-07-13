@@ -17,8 +17,6 @@ from googleapiclient.discovery import Resource
 from assistant.config import load
 from assistant.gmail import get_credentials, service
 
-PARENT = "Assistant"
-
 # (key, emoji, background, text) — colors must come from Gmail's fixed palette.
 _CATEGORY_SPECS = [
     ("Action-Needed", "⚡", "#ff7537", "#ffffff"),
@@ -53,7 +51,7 @@ class LabelSpec:
 
     @property
     def full_name(self) -> str:
-        return f"{PARENT}/{self.leaf}"
+        return self.leaf
 
 
 def _specs(
@@ -77,7 +75,7 @@ LABELS = _specs(_CATEGORY_SPECS, "labelShow") + _specs(
 
 FULL_NAME = {
     spec.key: spec.full_name for spec in LABELS
-}  # taxonomy key -> "Assistant/..."
+}  # taxonomy key -> label name, e.g. "⚡ Action-Needed"
 
 
 @dataclass
@@ -122,11 +120,6 @@ def reconcile(svc: Resource) -> ReconcileResult:
         label["name"]: label
         for label in labels_api.list(userId="me").execute().get("labels", [])
     }
-
-    if PARENT not in existing:
-        existing[PARENT] = labels_api.create(
-            userId="me", body={"name": PARENT, "labelListVisibility": "labelShow"}
-        ).execute()
 
     ids: dict[str, str] = {}
     created: list[str] = []

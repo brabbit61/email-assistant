@@ -62,7 +62,6 @@ def test_first_reconcile_creates_all_labels():
     assert result.updated == []
     assert result.unchanged == []
     assert len(result.ids) == len(labels.LABELS)
-    assert labels.PARENT in svc.store
 
 
 def test_second_reconcile_is_idempotent():

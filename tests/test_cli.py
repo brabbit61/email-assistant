@@ -312,7 +312,7 @@ def test_audit_prints_actions_with_reasoning_and_since_filter(
     conn.execute(
         "INSERT INTO action_events(action_id, status, action_type, actor, "
         "gmail_message_id, detail, recorded_at) VALUES "
-        "('a1','confirmed','label_add','worker','m1','Assistant/\N{MONEY BAG} Finance',?)",
+        "('a1','confirmed','label_add','worker','m1','\N{MONEY BAG} Finance',?)",
         (store.now_iso(),),
     )
     conn.commit()

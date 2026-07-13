@@ -79,7 +79,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             lines.append(f"  ERROR    {row['gmail_message_id']}  {e}")
             continue
         labeled += 1
-        tag = " ".join(name.split("/", 1)[1] for name in result.labels)
+        tag = " ".join(result.labels)
         subject = (row["subject"] or "(no subject)")[:50]
         lines.append(f"  {row['gmail_message_id']:<16}  {tag:<28}  {subject}")
 

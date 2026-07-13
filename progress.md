@@ -139,7 +139,34 @@ Grilled all three sign-off decisions. Built `src/assistant/labels.py`: one taxon
 
 **How it was verified:** `uv run pytest` → 19/19 green (first reconcile creates all 15; second reconcile is fully idempotent — 0 created/updated; a drifted color patches only that one label). ruff clean. **Live:** ran `uv run python -m assistant.labels` against Jenit's real Gmail — first run created 14 labels (+ parent), second run reported 0 created / 0 updated / 14 unchanged; a follow-up `labels.list` readback confirmed all 15 names/colors/visibility match spec exactly. **Outstanding:** Jenit still needs to look at the sidebar (web + mobile) and confirm the labels are visually distinguishable before this closes — the one acceptance criterion that isn't a repo-side check.
 
+### #13 — T1.7 Label applier with audit-before-write guarantee
+**Status:** Closed
+
+Closed on GitHub back on 2026-07-13 with nothing actually built — flagged during #14 planning (no `apply`/`archive` function anywhere in the repo, no commit, no branch) and reopened in substance to build it for real. Built `src/assistant/apply.py`: `apply_verdict(conn, svc, run_id, gmail_message_id, verdict, ...) -> ApplyResult`. One `action_id` per label (category, priority when present, archive when enabled), but exactly one combined `messages.modify` Gmail call per message — every `intended` `action_events` row precedes it, every `confirmed`/`failed` row follows it. Added `labels.label_ids(svc)` (live name→id lookup, no create/patch, per #10's decision) and a small `labels.FULL_NAME` key→full-name map.
+
+**Decided:**
+- **`dry_run=True` skips the Gmail call *and* every `action_events` write**, not just the Gmail call — an `intended`-only row with no eventual terminal event would be indistinguishable from a genuine mid-crash, and a dry run isn't one.
+- **Archive gated by a new `auto_archive_low_value` config tunable** (`config.toml [triage]`, default `false`) — Phase 3 flips it on, as originally scoped.
+- **Label ids resolved before any audit write**, not after — a missing/unreconciled label is a setup problem (taxonomy not reconciled), not a per-message crash, so it raises `KeyError` with zero dangling `action_events` rows rather than leaving a permanently-unconfirmed intent behind.
+- Idempotent re-application (crash-reprocess) gets a **fresh `action_id`** each time, not the same one — an extra log row, not a bug, consistent with ADR 0001's "retry = new intent" convention.
+
+**How it was verified:** `uv run pytest tests/test_apply.py` → 7/7 green (category+priority in one combined call; dry-run touches neither Gmail nor the audit log; archive on/off gating; a Gmail failure leaves matching `failed` terminal events and re-raises for the caller to isolate; a missing label raises before any audit write). ruff clean.
+
+### #14 — T1.8 `assistant` CLI: `run --dry-run`, `status`, `audit`, `costs`
+**Status:** Closed
+
+Rewrote `src/assistant/cli.py` (previously a scaffolding stub) with stdlib `argparse` — no click/typer, consistent with the repo's repeated minimal-deps decisions (#6/#7/#9). `run` composes `poll.poll_once` → `classify.classify`/`record` → `apply.apply_verdict` into one pass, retrying any message whose latest classification is still `UNCLASSIFIED` (via a new `current_classifications` view, schema v2, mirroring `current_actions`/`current_checkpoint`) and isolating per-message failures so one poisoned message doesn't abort the batch. `status`/`audit`/`costs` are read-only reports over the same tables.
+
+**Decided (output formats signed off on issue #14, samples posted as a comment):**
+- **`run`'s own run-summary row uses `run_events(phase='triage', ...)`, not `phase='finished'`.** `current_checkpoint` matches on `phase='finished' AND status='ok'` without checking `history_id IS NOT NULL` — a same-named summary row from the CLI would race `poll.py`'s own checkpoint row for "latest event_id" and could null out the poller's resume point. `phase='triage'` is a value only the CLI writes.
+- **Cost figures show 4 decimal places throughout** (total, cap, per-line, daily average/cap, daily breakdown) — 2dp rounded a single Haiku classify call (~$0.001) to $0.00, hiding real spend. Changed after Jenit's review of the sample output.
+- **`audit` prints one line per action's *current* state** (via `current_actions`), not a doubled `intended`+`confirmed` row per action — caught during live testing, where the trailing summary line was misreporting confirmed actions as "pending" because it tallied raw event rows instead of derived state.
+- Exit codes: `run` and `status` are nonzero on any unhealthy condition (per-message errors; no checkpoint; last run errored; any action stuck `intended`); `audit`/`costs` are informational (0 unless a hard DB/config error). Bare `assistant` (no subcommand) still prints usage and exits 0, preserving CI's smoke-test step.
+- `SCHEMA_VERSION` (`store.py`) changed from a hand-maintained literal to `len(_MIGRATIONS)` — the literal drifted out of sync twice while the `current_classifications` migration was being added.
+
+**How it was verified:** `uv run pytest` → 47/47 green (includes 9 new `tests/test_cli.py` cases: happy-path run, dry-run writes zero Gmail mutations but still records cost, UNCLASSIFIED retry, per-message failure isolation, status health/unhealth, audit reasoning + `--since` filter, costs aggregation, bare-command exit). ruff clean. All four commands' sample output in the #14 sign-off comment is genuine executed output (seeded demo DB + faked Gmail/Anthropic edges), not a hand-typed mockup.
+
 ## Open / not yet started
 - #5 sign-off (hermes pin v2026.7.7.2, install layout, model config — comment posted on the issue)
 - #10 visual sign-off (Jenit to confirm labels look right in Gmail web + mobile)
-- Phase 1 tickets #11–#17
+- Phase 1 tickets #15–#17

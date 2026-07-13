@@ -90,9 +90,9 @@ def poll_once(conn: sqlite3.Connection, svc: Resource) -> RunResult:
         row = gmail.get_message(svc, msg_id)
         cur = conn.execute(
             "INSERT OR IGNORE INTO messages"
-            "(gmail_message_id, thread_id, sender, subject, snippet, body, "
+            "(gmail_message_id, thread_id, sender, subject, body, "
             " internal_date_ms, first_seen_at) "
-            "VALUES (:gmail_message_id, :thread_id, :sender, :subject, :snippet, "
+            "VALUES (:gmail_message_id, :thread_id, :sender, :subject, "
             " :body, :internal_date_ms, :first_seen_at)",
             {**row, "first_seen_at": store.now_iso()},
         )

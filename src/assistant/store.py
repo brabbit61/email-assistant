@@ -29,7 +29,6 @@ _MIGRATIONS: list[str] = [
         thread_id        TEXT,
         sender           TEXT,
         subject          TEXT,
-        snippet          TEXT,
         body             TEXT,
         internal_date_ms INTEGER,
         first_seen_at    TEXT NOT NULL
@@ -47,11 +46,19 @@ _MIGRATIONS: list[str] = [
         created_at       TEXT NOT NULL
     );
 
+    -- category/priority CHECKs are the persistence guarantee: an off-taxonomy
+    -- value raises on INSERT and the classifier rewrites the row as UNCLASSIFIED.
+    -- ponytail: category list is duplicated from labels.CATEGORIES (a migration
+    -- string can't import) + 'UNCLASSIFIED'; test_classify asserts they match.
     CREATE TABLE classifications (
         id               INTEGER PRIMARY KEY,
         gmail_message_id TEXT NOT NULL REFERENCES messages(gmail_message_id),
-        category         TEXT NOT NULL,
-        priority         TEXT,
+        category         TEXT NOT NULL CHECK(category IN (
+                             'Action-Needed','Finance','Bills','Orders','Events',
+                             'Travel','Work','Personal','Dev','Newsletters',
+                             'Low-Value','UNCLASSIFIED')),
+        priority         TEXT CHECK(priority IN
+                             ('P1-Urgent','P2-This-Week','P3-FYI') OR priority IS NULL),
         reasoning        TEXT,
         llm_call_id      INTEGER REFERENCES llm_calls(id),
         classified_at    TEXT NOT NULL

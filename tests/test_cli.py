@@ -345,7 +345,7 @@ def test_costs_aggregates_by_purpose_and_model(tmp_path, monkeypatch, capsys):
 
     assert code == 0
     out = capsys.readouterr().out
-    assert "2026-07 — $0.00 of $15.00 monthly cap" in out  # rounds to 2dp
+    assert "2026-07 — $0.0035 of $15.0000 monthly cap" in out  # 4dp: sub-cent visible
     assert "classify" in out and "claude-haiku-4-5-20251001" in out
 
 

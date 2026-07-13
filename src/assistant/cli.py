@@ -191,13 +191,16 @@ def cmd_audit(args: argparse.Namespace) -> int:
         "%Y-%m-%dT%H:%M:%SZ"
     )
 
+    # One line per logical action's *current* state (not every intended+confirmed
+    # event row) — a confirmed action isn't "pending" just because it started life
+    # as an intended row.
     rows = conn.execute(
-        "SELECT ae.recorded_at, ae.status, ae.action_type, ae.gmail_message_id, "
-        "       ae.detail, ae.error, cc.reasoning "
-        "FROM action_events ae "
+        "SELECT ca.recorded_at, ca.status, ca.action_type, ca.gmail_message_id, "
+        "       ca.detail, ca.error, cc.reasoning "
+        "FROM current_actions ca "
         "LEFT JOIN current_classifications cc "
-        "  ON cc.gmail_message_id = ae.gmail_message_id "
-        "WHERE ae.recorded_at >= ? ORDER BY ae.recorded_at",
+        "  ON cc.gmail_message_id = ca.gmail_message_id "
+        "WHERE ca.recorded_at >= ? ORDER BY ca.recorded_at",
         (since,),
     ).fetchall()
 
@@ -235,7 +238,7 @@ def cmd_costs(args: argparse.Namespace) -> int:
     )
     pct = (total / cfg.monthly_usd_cap * 100) if cfg.monthly_usd_cap else 0.0
     print(
-        f"{month} — ${total:.2f} of ${cfg.monthly_usd_cap:.2f} monthly cap ({pct:.0f}%)"
+        f"{month} — ${total:.4f} of ${cfg.monthly_usd_cap:.4f} monthly cap ({pct:.0f}%)"
     )
 
     by_purpose = conn.execute(
@@ -247,7 +250,7 @@ def cmd_costs(args: argparse.Namespace) -> int:
     for r in by_purpose:
         print(
             f"  {r['purpose']:<10} {r['actor']:<8} {r['calls']:>4} calls   "
-            f"${r['cost']:.2f}   {r['model']}"
+            f"${r['cost']:.4f}   {r['model']}"
         )
 
     days_seen = conn.execute(
@@ -257,7 +260,8 @@ def cmd_costs(args: argparse.Namespace) -> int:
     ).fetchone()[0]
     if days_seen:
         print(
-            f"Daily average: ${total / days_seen:.2f}/day (soft cap ${cfg.daily_usd_soft_cap:.2f}/day)"
+            f"Daily average: ${total / days_seen:.4f}/day "
+            f"(soft cap ${cfg.daily_usd_soft_cap:.4f}/day)"
         )
 
     daily = conn.execute(
@@ -268,7 +272,7 @@ def cmd_costs(args: argparse.Namespace) -> int:
     if daily:
         print("By day:")
         for r in daily:
-            print(f"  {r['day']}   ${r['cost']:.2f}")
+            print(f"  {r['day']}   ${r['cost']:.4f}")
     return 0
 
 

@@ -17,8 +17,6 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 1
-
 # One entry per schema version. Index i defines the migration from version i to
 # i+1. Append new entries here; never edit a shipped one.
 _MIGRATIONS: list[str] = [
@@ -122,6 +120,10 @@ _MIGRATIONS: list[str] = [
         );
     """,
 ]
+
+# Derived, not hardcoded: a literal constant here has twice drifted out of sync
+# with len(_MIGRATIONS) when a migration was appended without updating it too.
+SCHEMA_VERSION = len(_MIGRATIONS)
 
 
 def now_iso() -> str:

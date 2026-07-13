@@ -53,8 +53,8 @@ hermes/
   skill-email-assistant.md   # hermes skill: CLI usage, taxonomy, guardrails
   cron-jobs.md               # the 3 digest job definitions (natural language)
 deploy/
-  setup.sh                   # idempotent: venv, deps, systemd units — same on desktop & WSL2
-  assistant.timer/.service   # systemd user timer, 5-min triage
+  setup.sh                   # idempotent: venv, deps, generates+installs the systemd user
+                             #   timer/service (5-min triage) — same script on desktop & WSL2
   windows-box.md             # WSL2 install, Task Scheduler autostart, disable sleep
 ```
 

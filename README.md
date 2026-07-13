@@ -47,6 +47,10 @@ A systemd **user** timer fires `assistant run` every 5 minutes. One idempotent s
 That yields a *running* timer. For it to do useful work, authorize Gmail (above) and fill
 `secrets/.env` first — otherwise every run fails loudly until they're present.
 
+The worker ships in **dry-run trial mode** (`config.toml` `[triage] dry_run = true`): it
+classifies but never writes to Gmail. Watch it, spot-check with `assistant review`, then
+flip the gate to go live — full procedure in **[deploy/go-live.md](deploy/go-live.md)**.
+
 ```sh
 journalctl --user -u assistant.service -f            # live logs (-n 50 for recent)
 systemctl --user list-timers assistant.timer         # next/last fire

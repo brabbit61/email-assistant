@@ -43,6 +43,7 @@ def test_load_valid(tmp_path):
     cfg = load(home=root)
     assert cfg.classifier_model == "claude-haiku-4-5-20251001"
     assert cfg.poll_interval_minutes == 5
+    assert cfg.dry_run is True  # absent in CONFIG_TOML -> safe default (go-live gate)
     assert cfg.auto_archive_low_value is False  # absent in CONFIG_TOML -> default
     assert cfg.digest_times == ("07:00", "13:00", "20:00")
     assert cfg.secrets.telegram_token == SECRET_TOKEN  # quotes/comments parsed
@@ -72,6 +73,16 @@ def test_secrets_repr_is_masked(tmp_path):
     cfg = load(home=root)
     assert SECRET_TOKEN not in repr(cfg)  # repr(Config) includes repr(Secrets)
     assert "***" in repr(cfg.secrets)
+
+
+def test_dry_run_explicit_false_parses(tmp_path):
+    root = _make_repo(
+        tmp_path,
+        'EMAIL_ANTHROPIC_API_KEY="sk-ant-abc"\n'
+        f"TELEGRAM_TOKEN={SECRET_TOKEN}\nTELEGRAM_CHAT_ID=123456\n",
+    )
+    (root / "config.toml").write_text(CONFIG_TOML.replace("[triage]", "[triage]\ndry_run = false"))
+    assert load(home=root).dry_run is False  # explicit false = gone live
 
 
 def test_missing_config_toml_is_clear(tmp_path):

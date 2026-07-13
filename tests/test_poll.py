@@ -26,7 +26,6 @@ def _msg(mid, body="hello"):
         "thread_id": "t" + mid,
         "sender": "a@b.com",
         "subject": "subj " + mid,
-        "snippet": "snip",
         "body": body,
         "internal_date_ms": 123,
     }

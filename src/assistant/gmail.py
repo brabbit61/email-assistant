@@ -92,7 +92,6 @@ def get_message(svc: Resource, msg_id: str) -> dict:
         "thread_id": msg.get("threadId"),
         "sender": headers.get("from"),
         "subject": headers.get("subject"),
-        "snippet": msg.get("snippet"),
         "body": _decode_body(payload),
         "internal_date_ms": int(internal) if internal else None,
     }

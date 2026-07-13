@@ -30,6 +30,7 @@ _MIGRATIONS: list[str] = [
         sender           TEXT,
         subject          TEXT,
         snippet          TEXT,
+        body             TEXT,
         internal_date_ms INTEGER,
         first_seen_at    TEXT NOT NULL
     );

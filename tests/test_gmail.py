@@ -100,3 +100,30 @@ def test_auth_failure_recorded_in_db(tmp_path):
         "SELECT phase, status, note FROM run_events WHERE phase='auth'"
     ).fetchone()
     assert (row["phase"], row["status"], row["note"]) == ("auth", "error", "boom")
+
+
+def _b64(text):
+    import base64
+
+    return base64.urlsafe_b64encode(text.encode()).decode()
+
+
+def test_decode_body_prefers_plain_over_html():
+    payload = {
+        "mimeType": "multipart/alternative",
+        "parts": [
+            {"mimeType": "text/plain", "body": {"data": _b64("plain wins")}},
+            {"mimeType": "text/html", "body": {"data": _b64("<p>html</p>")}},
+        ],
+    }
+    assert gmail._decode_body(payload) == "plain wins"
+
+
+def test_decode_body_falls_back_to_html_when_no_plain():
+    payload = {
+        "mimeType": "multipart/mixed",
+        "parts": [
+            {"mimeType": "text/html", "body": {"data": _b64("<p>only html</p>")}}
+        ],
+    }
+    assert gmail._decode_body(payload) == "<p>only html</p>"

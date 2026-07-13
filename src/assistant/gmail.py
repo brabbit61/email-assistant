@@ -13,6 +13,7 @@ only entry point callers need:
 
 from __future__ import annotations
 
+import base64
 import os
 import sys
 from pathlib import Path
@@ -31,6 +32,92 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 def service(creds: Credentials) -> Resource:
     """Build the Gmail API client. Shared by every ticket that talks to Gmail."""
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
+def current_history_id(svc: Resource) -> str:
+    """Mailbox's current historyId — the forward-only bootstrap point."""
+    return svc.users().getProfile(userId="me").execute()["historyId"]
+
+
+def iter_history(svc: Resource, start_id: str) -> tuple[list[str], str]:
+    """New INBOX message ids since start_id, plus the response's latest historyId.
+
+    Drains every page. Raises HttpError(404) when start_id has aged out of Gmail's
+    ~1-week history window — the caller falls back to a bounded messages.list sweep.
+    """
+    api = svc.users().history()
+    ids: list[str] = []
+    latest = start_id
+    page_token = None
+    while True:
+        resp = api.list(
+            userId="me",
+            startHistoryId=start_id,
+            historyTypes=["messageAdded"],
+            labelId="INBOX",
+            pageToken=page_token,
+        ).execute()
+        latest = resp.get("historyId", latest)
+        for record in resp.get("history", []):
+            for added in record.get("messagesAdded", []):
+                ids.append(added["message"]["id"])
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            return ids, latest
+
+
+def list_messages_since(svc: Resource, epoch_s: int) -> list[str]:
+    """INBOX message ids received at/after epoch_s. The bounded 404-recovery sweep."""
+    api = svc.users().messages()
+    ids: list[str] = []
+    page_token = None
+    while True:
+        resp = api.list(
+            userId="me", q=f"in:inbox after:{epoch_s}", pageToken=page_token
+        ).execute()
+        ids.extend(m["id"] for m in resp.get("messages", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            return ids
+
+
+def get_message(svc: Resource, msg_id: str) -> dict:
+    """Full fetch → the fields the `messages` table needs, with a decoded text body."""
+    msg = svc.users().messages().get(userId="me", id=msg_id, format="full").execute()
+    payload = msg.get("payload", {})
+    headers = {h["name"].lower(): h["value"] for h in payload.get("headers", [])}
+    internal = msg.get("internalDate")
+    return {
+        "gmail_message_id": msg["id"],
+        "thread_id": msg.get("threadId"),
+        "sender": headers.get("from"),
+        "subject": headers.get("subject"),
+        "snippet": msg.get("snippet"),
+        "body": _decode_body(payload),
+        "internal_date_ms": int(internal) if internal else None,
+    }
+
+
+def _decode_body(payload: dict) -> str | None:
+    """Walk the MIME tree; prefer text/plain, fall back to text/html. Decoded UTF-8.
+
+    ponytail: no HTML tag-strip / is_html flag yet — add in Phase 2 if the agent's
+    rendering needs it.
+    """
+    plain = _find_part(payload, "text/plain")
+    return plain if plain is not None else _find_part(payload, "text/html")
+
+
+def _find_part(payload: dict, mime: str) -> str | None:
+    if payload.get("mimeType") == mime:
+        data = payload.get("body", {}).get("data")
+        if data:
+            return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+    for part in payload.get("parts", []):
+        found = _find_part(part, mime)
+        if found is not None:
+            return found
+    return None
 
 
 class AuthError(Exception):

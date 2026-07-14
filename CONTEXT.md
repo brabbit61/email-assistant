@@ -39,7 +39,7 @@ _Avoid_: alert, digest
 ### Data model (triage.db)
 
 **Message**:
-A Gmail message the worker has seen, identified by its Gmail message id. We store metadata only — sender, subject, snippet, thread, timestamps — never the full body.
+A Gmail message the worker has seen, identified by its Gmail message id. We store its metadata (sender, subject, thread, timestamps), the full body, and the raw Gmail JSON — so the classifier and the read-only agent work from the DB without re-fetching content from Gmail.
 _Avoid_: email, mail (informal only), record
 
 **Classification**:

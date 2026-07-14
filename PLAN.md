@@ -98,6 +98,8 @@ Tracker: **GitHub issues + milestones** in `brabbit61/email-assistant` (no Proje
 
 **Status (2026-07-11):** milestones, labels, and the first batch are live — T0.1–T0.6 = issues #1–#6, T1.1–T1.11 = issues #7–#17. Phase 2–5 requirements are preserved as epic issues #18–#21 (one per phase, milestoned, chained by Blocked-by); each epic is broken into atomic spec-first tickets when its predecessor phase nears completion. Future sessions: read this file + the open epics to resume.
 
+**Status (2026-07-13):** Phase 1 live (`dry_run = false`, go-live recorded on #17, now closed). Phase 2 batch created from epic #18 — S2.1–S2.4 = issues #37–#40, T2.1–T2.7 = issues #41–#47 (issue numbers share the PR sequence, hence the jump). Key Phase 2 decisions, recorded in ticket bodies: agent-composed digests with the digest structure living as an evolving section of the versioned skill file; agent data seam = read-only SQLite + `assistant` CLI; budget soft-cap breach is ping-only (nothing pauses); worker pings failures it survives while the digest cron detects checkpoint staleness; one shared Telegram bot (worker send-only); improvement loop = spec + automation (proposals only, Jenit approves every change).
+
 hermes-agent installed on the Linux desktop, pinned to tag **v2026.7.7.2** (commit `9de9c25`), install layout: default (`~/.hermes` config/data, `~/.local/bin/hermes` launcher). Provider configured for direct Anthropic API (`model.provider: anthropic`, `model.default: claude-sonnet-5`), verified with a single-query chat. See #5 for sign-off.
 
 **Ticket template (every issue body, no code snippets anywhere):** Goal · Context · Scope (in/out) · Acceptance criteria · Decisions requiring sign-off (checklist Jenit ticks) · Blocked by (#refs).
@@ -130,6 +132,24 @@ hermes-agent installed on the Linux desktop, pinned to tag **v2026.7.7.2** (comm
 | T1.11 | Dry-run trial (2–3 days) + accuracy spot-check + go-live decision | T1.10 | go-live |
 
 Dependency shape: Phase 0 is fully parallel; Phase 1 forks after T0.6 into schema/config → (Gmail chain: T1.3→T1.4/T1.5) + (classifier chain: T1.6→T1.9), converging at T1.7→T1.8→T1.10→T1.11.
+
+### Phase 2 tickets (milestone: Phase 2, created 2026-07-13)
+
+| # | Title | Depends on | Sign-offs required |
+|---|---|---|---|
+| S2.1 (#37) | Spec: digest structure, grounding rules & Telegram mockups | — | send times; three digest mockups; grounding rules; staleness threshold |
+| S2.2 (#38) | Spec: worker ping formats & trigger conditions (P1 / budget / failure) | — | P1 trigger + mockup; dedupe; quiet hours; breach + failure mockups and thresholds |
+| S2.3 (#39) | Spec: conversation playbook | — | intent list; per-intent permissions; guardrails wording; refusal behavior |
+| S2.4 (#40) | Spec: agent-improvement loop | — | capture convention; proposal surface; cadence; allowed scope |
+| T2.1 (#41) | Hermes Telegram gateway: bind bot, lock to chat id, verify two-way chat | #4 (done) | lockdown test from second account |
+| T2.2 (#42) | Worker Telegram notifier + P1 urgent ping path | S2.2 | — |
+| T2.3 (#43) | Budget-breach + failure-alert pings in worker | S2.2, T2.2 | — |
+| T2.4 (#44) | Hermes skill file: CLI, taxonomy, guardrails, schema, digest structure | S2.1, S2.3 | — |
+| T2.5 (#45) | Three hermes digest cron jobs + checkpoint-staleness lead | T2.1, T2.4 | — |
+| T2.6 (#46) | Improvement-loop automation: correction-review cron proposing skill/rubric edits | S2.4, T2.4 | — |
+| T2.7 (#47) | Phase 2 trial week: exit-criteria verification + close-out | all above | phase complete → close epic #18, draft Phase 3 |
+
+Dependency shape: S2.1–S2.4 and T2.1 start in parallel → ping chain (T2.2→T2.3) and skill chain (T2.4→T2.5, T2.6) → converge at T2.7.
 
 ## Auditability, transparency & cost awareness (cross-cutting requirement)
 

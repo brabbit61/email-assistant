@@ -29,6 +29,8 @@ _MIGRATIONS: list[str] = [
         subject          TEXT,
         body             TEXT,
         internal_date_ms INTEGER,
+        gmail_label_ids TEXT,
+        raw_json TEXT,
         first_seen_at    TEXT NOT NULL
     );
 

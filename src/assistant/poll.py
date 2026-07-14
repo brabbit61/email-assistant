@@ -91,9 +91,9 @@ def poll_once(conn: sqlite3.Connection, svc: Resource) -> RunResult:
         cur = conn.execute(
             "INSERT OR IGNORE INTO messages"
             "(gmail_message_id, thread_id, sender, subject, body, "
-            " internal_date_ms, first_seen_at) "
+            " internal_date_ms, gmail_label_ids, raw_json, first_seen_at) "
             "VALUES (:gmail_message_id, :thread_id, :sender, :subject, "
-            " :body, :internal_date_ms, :first_seen_at)",
+            " :body, :internal_date_ms, :gmail_label_ids, :raw_json, :first_seen_at)",
             {**row, "first_seen_at": store.now_iso()},
         )
         inserted += cur.rowcount

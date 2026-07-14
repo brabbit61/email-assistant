@@ -129,3 +129,55 @@ def test_decode_body_falls_back_to_html_when_no_plain():
         ],
     }
     assert gmail._decode_body(payload) == "<p>only html</p>"
+
+
+class _FakeMessagesGet:
+    def __init__(self, msg):
+        self._msg = msg
+
+    def get(self, userId, id, format):
+        return self
+
+    def execute(self):
+        return self._msg
+
+
+class _FakeSvcForGet:
+    def __init__(self, msg):
+        self._msg = msg
+
+    def users(self):
+        return self
+
+    def messages(self):
+        return _FakeMessagesGet(self._msg)
+
+
+def test_get_message_captures_auto_labels_and_raw_response():
+    import json
+
+    raw = {
+        "id": "m1",
+        "threadId": "t1",
+        "labelIds": ["INBOX", "IMPORTANT", "CATEGORY_PERSONAL"],
+        "internalDate": "123",
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [
+                {"name": "From", "value": "a@b.com"},
+                {"name": "Subject", "value": "hi"},
+            ],
+            "body": {"data": _b64("hello")},
+        },
+    }
+    row = gmail.get_message(_FakeSvcForGet(raw), "m1")
+
+    assert row["sender"] == "a@b.com" and row["body"] == "hello"
+    # Gmail's own auto-assigned labels, as a queryable JSON array
+    assert json.loads(row["gmail_label_ids"]) == [
+        "INBOX",
+        "IMPORTANT",
+        "CATEGORY_PERSONAL",
+    ]
+    # ...and the full response, verbatim
+    assert json.loads(row["raw_json"]) == raw

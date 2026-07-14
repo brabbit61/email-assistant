@@ -14,6 +14,7 @@ only entry point callers need:
 from __future__ import annotations
 
 import base64
+import json
 import os
 import sys
 from pathlib import Path
@@ -94,6 +95,9 @@ def get_message(svc: Resource, msg_id: str) -> dict:
         "subject": headers.get("subject"),
         "body": _decode_body(payload),
         "internal_date_ms": int(internal) if internal else None,
+        "gmail_label_ids": json.dumps(msg.get("labelIds", [])),
+        # ponytail: includes base64 attachment bytes in payload.parts[].body.data;
+        "raw_json": json.dumps(msg),
     }
 
 

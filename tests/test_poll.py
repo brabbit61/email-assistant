@@ -28,6 +28,8 @@ def _msg(mid, body="hello"):
         "subject": "subj " + mid,
         "body": body,
         "internal_date_ms": 123,
+        "gmail_label_ids": '["INBOX", "IMPORTANT"]',
+        "raw_json": '{"id": "' + mid + '"}',
     }
 
 
@@ -65,6 +67,12 @@ def test_incremental_ingests_and_advances_checkpoint(tmp_path, monkeypatch):
         for r in conn.execute("SELECT gmail_message_id, body FROM messages")
     }
     assert bodies == {"m1": "m1", "m2": "m2"}
+    # Gmail's auto-labels + raw response persisted at ingestion (new columns)
+    row = conn.execute(
+        "SELECT gmail_label_ids, raw_json FROM messages WHERE gmail_message_id='m1'"
+    ).fetchone()
+    assert row["gmail_label_ids"] == '["INBOX", "IMPORTANT"]'
+    assert row["raw_json"] == '{"id": "m1"}'
 
 
 def test_replay_is_idempotent(tmp_path, monkeypatch):

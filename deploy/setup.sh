@@ -52,16 +52,34 @@ systemctl --user enable --now assistant.timer
 [ -f "$ROOT/secrets/.env" ] ||
 	echo "note: secrets/.env missing — runs fail loudly until you add it (see README)."
 
-HERMES_SKILLS="$HOME/.hermes/skills"
-if [ -d "$HERMES_SKILLS" ]; then
+if command -v hermes >/dev/null 2>&1; then
 	echo "==> linking hermes skill (repo stays the source of truth)"
+	HERMES_SKILLS="$HOME/.hermes/skills"
 	mkdir -p "$HERMES_SKILLS/email"
 	ln -sfn "$ROOT/hermes/email-assistant" "$HERMES_SKILLS/email/email-assistant"
 	LINKED="$(readlink -f "$HERMES_SKILLS/email/email-assistant")"
 	[ "$LINKED" = "$ROOT/hermes/email-assistant" ] ||
 		{ echo "error: hermes skill symlink did not resolve into the repo" >&2; exit 1; }
+
+	# Without these, hermes narrates every tool call/command into the Telegram
+	# chat (interim "thinking" messages + raw tool-progress lines) — fine in a
+	# terminal, unreadable as a chatbot. Idempotent; safe to re-run.
+	echo "==> quieting hermes chat display for the Telegram UX"
+	hermes config set display.interim_assistant_messages false ||
+		echo "warning: could not set display.interim_assistant_messages (is hermes initialized? run 'hermes gateway install' first)"
+	hermes config set display.tool_progress false ||
+		echo "warning: could not set display.tool_progress"
+
+	# Bundled skills (himalaya, google-workspace, ...) are generic tools with
+	# none of this repo's guardrails. --remove strips any already-seeded ones too, not just
+	# future ones; only unmodified bundled skills are touched, local/hub skills
+	# are never removed. Idempotent (no-ops once opted out).
+	echo "==> restricting hermes to this repo's skill only"
+	hermes skills opt-out --remove --yes ||
+		echo "warning: could not opt hermes out of bundled skills"
+	echo "note: if the hermes gateway is already running, 'hermes gateway restart' picks up the reduced skill set."
 else
-	echo "note: ~/.hermes/skills not found — skipping hermes skill link (install hermes first, then re-run)."
+	echo "note: hermes CLI not found on PATH — skipping hermes skill link + display config (install hermes first, then re-run)."
 fi
 
 echo

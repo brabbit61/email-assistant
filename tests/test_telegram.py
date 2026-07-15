@@ -217,3 +217,233 @@ def test_no_hits_sends_nothing(tmp_path):
 
     assert calls == []
     assert conn.execute("SELECT COUNT(*) FROM action_events").fetchone()[0] == 0
+
+
+# --- operational pings (T2.3, #43) -------------------------------------------
+# A controllable now_iso so dedupe/ordering (which compare recorded_at strings)
+# are deterministic regardless of when the suite runs.
+
+
+class _Clock:
+    def __init__(self, t):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+def _op_conn(tmp_path):
+    return store.open_db(tmp_path / "triage.db")
+
+
+def _triage(conn, status, at):
+    conn.execute(
+        "INSERT INTO run_events(run_id, phase, status, recorded_at) "
+        "VALUES (?, 'triage', ?, ?)",
+        (store.new_id(), status, at),
+    )
+    conn.commit()
+
+
+def _seed_ping(conn, action_type, at):
+    conn.execute(
+        "INSERT INTO action_events(action_id, status, action_type, actor, recorded_at) "
+        "VALUES (?, 'confirmed', ?, 'worker', ?)",
+        (store.new_id(), action_type, at),
+    )
+    conn.commit()
+
+
+def _seed_cost(conn, created_at, cost):
+    conn.execute(
+        "INSERT INTO llm_calls"
+        "(actor, purpose, model, input_tokens, output_tokens, cost_usd, created_at) "
+        "VALUES ('worker', 'classify', 'm', 1, 1, ?, ?)",
+        (cost, created_at),
+    )
+    conn.commit()
+
+
+def test_failure_ping_fires_only_at_threshold(tmp_path, monkeypatch):
+    conn = _op_conn(tmp_path)
+    monkeypatch.setattr(store, "now_iso", _Clock("2026-07-14T09:00:00Z"))
+    for i in range(4):
+        _triage(conn, "failed", f"2026-07-14T08:0{i}:00Z")
+    calls = []
+    send = _fake_send(calls)
+
+    telegram.notify_failure(conn, "r", "tok", "c", "boom", send_fn=send)
+    assert calls == []  # 4 < FAILURE_THRESHOLD
+
+    _triage(conn, "failed", "2026-07-14T08:05:00Z")
+    telegram.notify_failure(
+        conn, "r", "tok", "c", "HttpError 503 (Gmail)", send_fn=send
+    )
+    assert len(calls) == 1
+    assert "5 runs in a row" in calls[0][2]
+    assert "HttpError 503 (Gmail)" in calls[0][2]
+
+
+def test_failure_ping_dedupes_within_a_streak(tmp_path, monkeypatch):
+    conn = _op_conn(tmp_path)
+    clock = _Clock("2026-07-14T09:00:00Z")
+    monkeypatch.setattr(store, "now_iso", clock)
+    for i in range(5):
+        _triage(conn, "failed", f"2026-07-14T08:0{i}:00Z")
+    calls = []
+    send = _fake_send(calls)
+
+    telegram.notify_failure(conn, "r", "tok", "c", "boom", send_fn=send)
+    clock.t = "2026-07-14T09:05:00Z"
+    _triage(conn, "failed", "2026-07-14T09:04:00Z")  # 6th crash, same streak
+    telegram.notify_failure(conn, "r", "tok", "c", "boom", send_fn=send)
+
+    assert len(calls) == 1  # once per streak
+
+
+def test_failure_streak_resets_after_a_success(tmp_path, monkeypatch):
+    conn = _op_conn(tmp_path)
+    clock = _Clock("2026-07-14T09:00:00Z")
+    monkeypatch.setattr(store, "now_iso", clock)
+    for i in range(5):
+        _triage(conn, "failed", f"2026-07-14T08:0{i}:00Z")
+    calls = []
+    send = _fake_send(calls)
+
+    telegram.notify_failure(conn, "r", "tok", "c", "boom", send_fn=send)  # fires
+    _triage(conn, "ok", "2026-07-14T10:00:00Z")  # recovery: streak boundary
+    for i in range(5):
+        _triage(conn, "failed", f"2026-07-14T11:0{i}:00Z")
+    clock.t = "2026-07-14T11:30:00Z"
+    telegram.notify_failure(conn, "r", "tok", "c", "boom", send_fn=send)  # fires again
+
+    assert len(calls) == 2
+
+
+def test_failure_send_failure_is_isolated(tmp_path, monkeypatch):
+    conn = _op_conn(tmp_path)
+    monkeypatch.setattr(store, "now_iso", _Clock("2026-07-14T09:00:00Z"))
+    for i in range(5):
+        _triage(conn, "failed", f"2026-07-14T08:0{i}:00Z")
+
+    telegram.notify_failure(
+        conn, "r", "tok", "c", "boom", send_fn=_fake_send([], fail=True)
+    )  # must not raise
+
+    rows = conn.execute(
+        "SELECT status FROM action_events WHERE action_type='failure_ping'"
+    ).fetchall()
+    assert [r["status"] for r in rows] == ["intended", "failed"]
+    # the ping added no run_event of its own
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM run_events WHERE status='failed'"
+        ).fetchone()[0]
+        == 5
+    )
+
+
+def test_recovery_fires_after_unacked_alert_then_dedupes(tmp_path, monkeypatch):
+    conn = _op_conn(tmp_path)
+    monkeypatch.setattr(store, "now_iso", _Clock("2026-07-14T10:00:00Z"))
+    _seed_ping(conn, "failure_ping", "2026-07-14T09:30:00Z")
+    calls = []
+    send = _fake_send(calls)
+
+    telegram.notify_recovery(conn, "r", "tok", "c", send_fn=send)
+    assert len(calls) == 1
+    assert "recovered" in calls[0][2].lower()
+
+    telegram.notify_recovery(conn, "r", "tok", "c", send_fn=send)
+    assert len(calls) == 1  # recovery_ping is now the newest → no re-fire
+
+
+def test_recovery_noop_without_an_alert(tmp_path, monkeypatch):
+    conn = _op_conn(tmp_path)
+    monkeypatch.setattr(store, "now_iso", _Clock("2026-07-14T10:00:00Z"))
+    calls = []
+
+    telegram.notify_recovery(conn, "r", "tok", "c", send_fn=_fake_send(calls))
+    assert calls == []
+
+
+def test_recovery_covers_an_oauth_outage(tmp_path, monkeypatch):
+    conn = _op_conn(tmp_path)
+    monkeypatch.setattr(store, "now_iso", _Clock("2026-07-14T10:00:00Z"))
+    _seed_ping(conn, "oauth_ping", "2026-07-14T09:30:00Z")
+    calls = []
+
+    telegram.notify_recovery(conn, "r", "tok", "c", send_fn=_fake_send(calls))
+    assert len(calls) == 1  # one recovery ping covers failure and oauth alike
+
+
+def test_budget_fires_once_over_cap_same_day(tmp_path, monkeypatch):
+    conn = _op_conn(tmp_path)
+    day = "2026-07-14"
+    monkeypatch.setattr(store, "now_iso", _Clock(f"{day}T12:00:00Z"))
+    _seed_cost(conn, f"{day}T09:00:00Z", 0.50)
+    _seed_cost(conn, f"{day}T11:00:00Z", 0.40)  # 0.90 total > 0.75
+    calls = []
+    send = _fake_send(calls)
+
+    telegram.notify_budget(
+        conn, "r", "tok", "c", soft_cap=0.75, monthly_cap=15.0, send_fn=send
+    )
+    assert len(calls) == 1
+    assert "$0.90" in calls[0][2]
+    assert "$0.75" in calls[0][2]
+
+    telegram.notify_budget(
+        conn, "r", "tok", "c", soft_cap=0.75, monthly_cap=15.0, send_fn=send
+    )
+    assert len(calls) == 1  # once per UTC day
+
+
+def test_budget_noop_under_cap(tmp_path, monkeypatch):
+    conn = _op_conn(tmp_path)
+    day = "2026-07-14"
+    monkeypatch.setattr(store, "now_iso", _Clock(f"{day}T12:00:00Z"))
+    _seed_cost(conn, f"{day}T09:00:00Z", 0.50)
+    calls = []
+
+    telegram.notify_budget(
+        conn,
+        "r",
+        "tok",
+        "c",
+        soft_cap=0.75,
+        monthly_cap=15.0,
+        send_fn=_fake_send(calls),
+    )
+    assert calls == []
+
+
+def test_oauth_fires_and_stays_silent_until_reauth(tmp_path, monkeypatch):
+    conn = _op_conn(tmp_path)
+    clock = _Clock("2026-07-14T09:00:00Z")
+    monkeypatch.setattr(store, "now_iso", clock)
+    calls = []
+    send = _fake_send(calls)
+
+    telegram.notify_oauth_death(conn, "r", "tok", "c", "refresh failed", send_fn=send)
+    assert len(calls) == 1
+    assert "auth dead" in calls[0][2].lower()
+
+    clock.t = "2026-07-14T09:05:00Z"  # still no successful auth
+    telegram.notify_oauth_death(conn, "r", "tok", "c", "refresh failed", send_fn=send)
+    assert len(calls) == 1  # silent until re-auth
+
+    _triage(conn, "started", "2026-07-14T10:00:00Z")  # a later run authenticates
+    clock.t = "2026-07-14T10:05:00Z"
+    telegram.notify_oauth_death(conn, "r", "tok", "c", "failed again", send_fn=send)
+    assert len(calls) == 2  # a fresh outage pings again
+
+
+def test_oauth_writes_no_run_events(tmp_path, monkeypatch):
+    conn = _op_conn(tmp_path)
+    monkeypatch.setattr(store, "now_iso", _Clock("2026-07-14T09:00:00Z"))
+
+    telegram.notify_oauth_death(conn, "r", "tok", "c", "boom", send_fn=_fake_send([]))
+
+    # never feeds the failure counter — it touches no run_events at all
+    assert conn.execute("SELECT COUNT(*) FROM run_events").fetchone()[0] == 0

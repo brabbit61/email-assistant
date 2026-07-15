@@ -166,6 +166,23 @@ Rewrote `src/assistant/cli.py` (previously a scaffolding stub) with stdlib `argp
 
 **How it was verified:** `uv run pytest` → 47/47 green (includes 9 new `tests/test_cli.py` cases: happy-path run, dry-run writes zero Gmail mutations but still records cost, UNCLASSIFIED retry, per-message failure isolation, status health/unhealth, audit reasoning + `--since` filter, costs aggregation, bare-command exit). ruff clean. All four commands' sample output in the #14 sign-off comment is genuine executed output (seeded demo DB + faked Gmail/Anthropic edges), not a hand-typed mockup.
 
+## Phase 2: Telegram + hermes
+
+### #41 — T2.1 Hermes Telegram gateway: bind bot, lock to chat id, verify two-way chat
+**Status:** Closed
+
+Bound hermes-agent's messaging gateway to the Phase 0 Telegram bot (#4) and locked it to Jenit's chat id. `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALLOWED_USERS=<Jenit's chat id>` added to hermes's own `~/.hermes/.env`; `unauthorized_dm_behavior: ignore` added to `~/.hermes/config.yaml`. Installed and started as a systemd **user** service via `hermes gateway install` (mirrors the worker's existing timer pattern; linger already enabled). Runbook at `deploy/hermes-gateway.md`.
+
+**Decided:**
+- **Lockdown = the `TELEGRAM_ALLOWED_USERS` allowlist env var, not `dm_policy`.** Telegram has no `dm_policy` setting in hermes (that's a WhatsApp/WeCom/Weixin construct) — the allowlist is the entire access-control mechanism for Telegram, and it's fail-closed, enforced at message intake before the agent ever sees the message.
+- **Config lives in hermes's own files, not this repo's `secrets/.env`.** The bot token is duplicated under two different env var names in two separate `.env` files (worker's `TELEGRAM_TOKEN`, hermes's `TELEGRAM_BOT_TOKEN`) — accepted as the cost of two independent processes; not plumbed together.
+- **`unauthorized_dm_behavior: ignore`** (not the default `pair`) — a non-allowlisted sender gets total silence, matching the ticket's "ignored" acceptance criterion exactly, rather than a pairing-request prompt.
+- **One shared bot token confirmed safe with the worker's future send-only path (#42).** Telegram caps `getUpdates` long-polling at one consumer per token — the gateway is that consumer; `sendMessage` (the worker's whole job in #42) has no such cap. Constraint written into #42: the worker must never call `getUpdates` or register a webhook.
+- **Round-trip test scoped to transport only.** The verified reply is vanilla hermes, not email-assistant-aware — that's #44's job.
+- **Sign-off box closed via a one-account inversion test instead of a second Telegram account:** allowlist temporarily pointed at a wrong id → message from Jenit's real account produced no reply → allowlist restored → reply came back.
+
+**How it was verified:** `hermes gateway status` confirmed `active`/`enabled` with a stable PID (no crash loop) after install. Jenit ran both phone-side tests from his own Telegram — round-trip (message → reply) and the inversion test (silence under a wrong allowlist id, then restored) — both passed 2026-07-14.
+
 ## Open / not yet started
 - #5 sign-off (hermes pin v2026.7.7.2, install layout, model config — comment posted on the issue)
 - #10 visual sign-off (Jenit to confirm labels look right in Gmail web + mobile)

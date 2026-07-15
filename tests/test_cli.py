@@ -6,6 +6,7 @@ test_apply.py) so the run loop's wiring is exercised end-to-end.
 """
 
 import argparse
+import sqlite3
 
 import pytest
 
@@ -664,6 +665,70 @@ def test_costs_aggregates_by_purpose_and_model(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "2026-07 — $0.0035 of $15.0000 monthly cap" in out  # 4dp: sub-cent visible
     assert "classify" in out and "claude-haiku-4-5-20251001" in out
+
+
+def _make_hermes_db(tmp_path, rows):
+    """A minimal stand-in for hermes's own ~/.hermes/state.db `sessions` table —
+    only the columns cmd_import_hermes reads."""
+    path = tmp_path / "hermes_state.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, model TEXT, "
+        "input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER, "
+        "cache_write_tokens INTEGER, billing_provider TEXT, ended_at REAL)"
+    )
+    conn.executemany(
+        "INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_import_hermes_prices_finished_sessions_and_skips_the_rest(
+    tmp_path, monkeypatch, capsys
+):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    store.open_db(root / "data" / "triage.db")
+
+    hermes_db = _make_hermes_db(
+        tmp_path,
+        [
+            # priced, finished, anthropic -> imported
+            ("s1", "telegram", "claude-sonnet-5", 1000, 500, 2000, 100, "anthropic", 100.0),
+            # unpriced model -> skipped
+            ("s2", "tui", "some-future-model", 10, 10, 0, 0, "anthropic", 200.0),
+            # still open -> skipped
+            ("s3", "telegram", "claude-sonnet-5", 10, 10, 0, 0, "anthropic", None),
+            # not billed via anthropic -> skipped
+            ("s4", "telegram", "claude-sonnet-5", 10, 10, 0, 0, "", 300.0),
+        ],
+    )
+
+    code = cli.cmd_import_hermes(argparse.Namespace(hermes_db=str(hermes_db)))
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Imported 1 hermes session(s)" in out
+    assert "some-future-model" in out
+
+    conn = store.open_db(root / "data" / "triage.db")
+    row = conn.execute(
+        "SELECT actor, purpose, model, cost_usd, hermes_session_id FROM llm_calls"
+    ).fetchone()
+    assert row["actor"] == "hermes"
+    assert row["purpose"] == "telegram"
+    assert row["hermes_session_id"] == "s1"
+    assert row["cost_usd"] == pytest.approx(
+        (1000 * 2.0 + 500 * 10.0 + 2000 * 0.2 + 100 * 2.5) / 1_000_000
+    )
+
+    # Re-running must not double-count (natural-key dedupe on hermes_session_id).
+    cli.cmd_import_hermes(argparse.Namespace(hermes_db=str(hermes_db)))
+    count = conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0]
+    assert count == 1
 
 
 # --- open: Gmail-verified still-open (T2.4, #44) ------------------------------

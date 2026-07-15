@@ -1,6 +1,6 @@
 """The `assistant` CLI: `run [--dry-run]`, `status`, `audit [--since]`, `review
-[--since]`, `costs [--month]`, `open` (T1.8 issue #14; `review` added in T1.11
-issue #17; `open` added in T2.4 issue #44).
+[--since]`, `costs [--month]`, `open`, `import-hermes [--hermes-db]` (T1.8 issue
+#14; `review` added in T1.11 issue #17; `open` added in T2.4 issue #44).
 
 The seam between the deterministic worker and everything else: hermes runs these
 subcommands verbatim (no MCP server, no RPC), cron/systemd read the exit code,
@@ -16,6 +16,7 @@ import argparse
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from assistant import apply, classify, config, gmail, poll, store, telegram
 from assistant.classify import UNCLASSIFIED, Email, Verdict
@@ -350,6 +351,102 @@ def cmd_costs(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- import-hermes -------------------------------------------------------------
+#
+# hermes-agent is a separate process with its own Anthropic key and its own
+# session log (~/.hermes/state.db) — nothing here ever sees those calls, so the
+# cost ledger (`llm_calls`) undercounts vs. the Anthropic console by exactly
+# hermes's spend. hermes records tokens per session but not USD (no local price
+# for a model this new), so we price them ourselves and import one row per
+# *finished* session (ended_at IS NOT NULL — a session's tokens are only final
+# once it ends, so a still-open chat is picked up on a later run instead of
+# double-counted). ponytail: rates hardcoded from hermes's own model cache;
+# add a model here when hermes starts using another one.
+
+_HERMES_DB_PATH = Path.home() / ".hermes" / "state.db"
+
+# $ per 1M tokens.
+_HERMES_PRICES: dict[str, dict[str, float]] = {
+    "claude-sonnet-5": {  # kept for sessions already on record before the haiku switch
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5,
+    },
+    "claude-haiku-4-5-20251001": {  # hermes's agent model as of config.toml's switch
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.1,
+        "cache_write": 1.25,
+    },
+}
+
+
+def _hermes_session_cost(row: sqlite3.Row) -> float | None:
+    """USD for one hermes session, or None if its model has no local price."""
+    rates = _HERMES_PRICES.get(row["model"])
+    if rates is None:
+        return None
+    return (
+        row["input_tokens"] * rates["input"]
+        + row["output_tokens"] * rates["output"]
+        + row["cache_read_tokens"] * rates["cache_read"]
+        + row["cache_write_tokens"] * rates["cache_write"]
+    ) / 1_000_000
+
+
+def cmd_import_hermes(args: argparse.Namespace) -> int:
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+
+    hermes_db_path = Path(args.hermes_db)
+    if not hermes_db_path.exists():
+        print(f"No hermes session log at {hermes_db_path}")
+        return 0
+
+    hermes = sqlite3.connect(f"file:{hermes_db_path}?mode=ro", uri=True)
+    hermes.row_factory = sqlite3.Row
+    sessions = hermes.execute(
+        "SELECT id, source, model, input_tokens, output_tokens, "
+        "cache_read_tokens, cache_write_tokens, ended_at FROM sessions "
+        "WHERE ended_at IS NOT NULL AND billing_provider = 'anthropic'"
+    ).fetchall()
+    hermes.close()
+
+    imported, imported_cost, skipped_models = 0, 0.0, set()
+    for s in sessions:
+        cost = _hermes_session_cost(s)
+        if cost is None:
+            skipped_models.add(s["model"])
+            continue
+        created_at = datetime.fromtimestamp(s["ended_at"], tz=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO llm_calls(actor, purpose, model, input_tokens, "
+            "output_tokens, cost_usd, created_at, hermes_session_id) "
+            "VALUES ('hermes', ?, ?, ?, ?, ?, ?, ?)",
+            (
+                s["source"] or "chat",
+                s["model"],
+                s["input_tokens"],
+                s["output_tokens"],
+                cost,
+                created_at,
+                s["id"],
+            ),
+        )
+        if cur.rowcount:
+            imported += 1
+            imported_cost += cost
+    conn.commit()
+
+    print(f"Imported {imported} hermes session(s), ${imported_cost:.4f}")
+    if skipped_models:
+        print(f"Skipped (no local price): {', '.join(sorted(skipped_models))}")
+    return 0
+
+
 # --- open --------------------------------------------------------------------
 
 
@@ -466,6 +563,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "open", help="actionable set, Gmail-verified still-open (read-only)"
     )
     p_open.set_defaults(func=cmd_open)
+
+    p_import_hermes = sub.add_parser(
+        "import-hermes", help="pull finished hermes sessions into the cost ledger"
+    )
+    p_import_hermes.add_argument(
+        "--hermes-db", default=str(_HERMES_DB_PATH), help="path to hermes's state.db"
+    )
+    p_import_hermes.set_defaults(func=cmd_import_hermes)
 
     return parser
 

@@ -121,6 +121,13 @@ _MIGRATIONS: list[str] = [
             WHERE c2.gmail_message_id = c.gmail_message_id
         );
     """,
+    """
+    -- Natural key for hermes-imported rows (NULL for worker rows); a partial
+    -- unique index makes `import-hermes` re-runnable without double-counting.
+    ALTER TABLE llm_calls ADD COLUMN hermes_session_id TEXT;
+    CREATE UNIQUE INDEX idx_llm_calls_hermes_session ON llm_calls(hermes_session_id)
+        WHERE hermes_session_id IS NOT NULL;
+    """,
 ]
 
 # Derived, not hardcoded: a literal constant here has twice drifted out of sync

@@ -2,7 +2,7 @@
 
 [models]
 classifier = "claude-haiku-4-5-20251001" # per-email triage
-agent = "claude-sonnet-5"                # hermes digests/chat/drafting
+agent = "claude-haiku-4-5-20251001"      # hermes digests/chat/drafting
 
 [budget]
 monthly_usd_cap = 15.00  # informational — enforced as a hard limit in the Anthropic console

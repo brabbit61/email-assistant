@@ -52,6 +52,18 @@ systemctl --user enable --now assistant.timer
 [ -f "$ROOT/secrets/.env" ] ||
 	echo "note: secrets/.env missing — runs fail loudly until you add it (see README)."
 
+HERMES_SKILLS="$HOME/.hermes/skills"
+if [ -d "$HERMES_SKILLS" ]; then
+	echo "==> linking hermes skill (repo stays the source of truth)"
+	mkdir -p "$HERMES_SKILLS/email"
+	ln -sfn "$ROOT/hermes/email-assistant" "$HERMES_SKILLS/email/email-assistant"
+	LINKED="$(readlink -f "$HERMES_SKILLS/email/email-assistant")"
+	[ "$LINKED" = "$ROOT/hermes/email-assistant" ] ||
+		{ echo "error: hermes skill symlink did not resolve into the repo" >&2; exit 1; }
+else
+	echo "note: ~/.hermes/skills not found — skipping hermes skill link (install hermes first, then re-run)."
+fi
+
 echo
 systemctl --user list-timers assistant.timer --no-pager || true
 echo

@@ -666,6 +666,173 @@ def test_costs_aggregates_by_purpose_and_model(tmp_path, monkeypatch, capsys):
     assert "classify" in out and "claude-haiku-4-5-20251001" in out
 
 
+# --- open: Gmail-verified still-open (T2.4, #44) ------------------------------
+
+
+class FakeThreadsService:
+    """svc.users().threads().get(...) fake — threads keyed by thread_id, each a
+    list of {"id": ..., "labelIds": [...]}."""
+
+    def __init__(self, threads: dict[str, list[dict]]):
+        self._threads = threads
+        self.calls: list[str] = []
+
+    def users(self):
+        return self
+
+    def threads(self):
+        return self
+
+    def get(self, userId, id, format):
+        self.calls.append(id)
+        return self._Exec(self._threads[id])
+
+    class _Exec:
+        def __init__(self, messages):
+            self._messages = messages
+
+        def execute(self):
+            return {"messages": self._messages}
+
+
+def _seed_actionable(conn, mid, category, priority, thread_id="t1", reasoning="r"):
+    conn.execute(
+        "INSERT INTO messages(gmail_message_id, sender, subject, thread_id, "
+        "first_seen_at) VALUES (?, 'a@b.com', 'subj', ?, ?)",
+        (mid, thread_id, store.now_iso()),
+    )
+    conn.execute(
+        "INSERT INTO classifications(gmail_message_id, category, priority, "
+        "reasoning, classified_at) VALUES (?, ?, ?, ?, ?)",
+        (mid, category, priority, reasoning, store.now_iso()),
+    )
+    conn.commit()
+
+
+def test_open_reports_unread_inbox_unreplied_as_open(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    svc = FakeThreadsService({"t1": [{"id": "m1", "labelIds": ["UNREAD", "INBOX"]}]})
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: svc)
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_actionable(conn, "m1", "Finance", "P1-Urgent")
+
+    code = cli.cmd_open(argparse.Namespace())
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Open — Gmail-verified (1):" in out
+    assert "P1-Urgent" in out
+    assert "1 actionable in DB · 1 open · 0 cleared" in out
+
+
+def test_open_reports_read_as_cleared(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    svc = FakeThreadsService({"t1": [{"id": "m1", "labelIds": ["INBOX"]}]})  # no UNREAD
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: svc)
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_actionable(conn, "m1", "Action-Needed", None)
+
+    code = cli.cmd_open(argparse.Namespace())
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Cleared since triage (1):" in out
+    assert "— read" in out
+    assert "1 actionable in DB · 0 open · 1 cleared" in out
+
+
+def test_open_reports_archived_as_cleared(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    svc = FakeThreadsService({"t1": [{"id": "m1", "labelIds": ["UNREAD"]}]})  # no INBOX
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: svc)
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_actionable(conn, "m1", "Action-Needed", None)
+
+    code = cli.cmd_open(argparse.Namespace())
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "— archived" in out
+
+
+def test_open_reports_replied_as_cleared_even_if_unread_and_in_inbox(
+    tmp_path, monkeypatch, capsys
+):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    svc = FakeThreadsService(
+        {
+            "t1": [
+                {"id": "m1", "labelIds": ["UNREAD", "INBOX"]},
+                {"id": "m1-reply", "labelIds": ["SENT"]},
+            ]
+        }
+    )
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: svc)
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_actionable(conn, "m1", "Action-Needed", None)
+
+    code = cli.cmd_open(argparse.Namespace())
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "— replied" in out
+
+
+def test_open_with_empty_actionable_set_never_calls_gmail(
+    tmp_path, monkeypatch, capsys
+):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+
+    def boom(cfg):
+        raise AssertionError("must not touch Gmail with nothing actionable")
+
+    monkeypatch.setattr(gmail, "get_credentials", boom)
+    store.open_db(root / "data" / "triage.db")
+
+    code = cli.cmd_open(argparse.Namespace())
+
+    assert code == 0
+    assert "0 actionable in DB · 0 open · 0 cleared" in capsys.readouterr().out
+
+
+def test_open_prints_nothing_and_fails_loudly_on_gmail_error(
+    tmp_path, monkeypatch, capsys
+):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+
+    class DeadService:
+        def users(self):
+            return self
+
+        def threads(self):
+            return self
+
+        def get(self, userId, id, format):
+            raise RuntimeError("Gmail outage")
+
+    monkeypatch.setattr(gmail, "service", lambda creds: DeadService())
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_actionable(conn, "m1", "Finance", "P1-Urgent")
+
+    code = cli.cmd_open(argparse.Namespace())
+
+    assert code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""  # never a partial/unverified list
+    assert "Gmail check failed" in captured.err
+
+
 def test_no_subcommand_prints_help_and_exits_zero(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["assistant"])
     with pytest.raises(SystemExit) as exc:

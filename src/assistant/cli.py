@@ -1,5 +1,6 @@
 """The `assistant` CLI: `run [--dry-run]`, `status`, `audit [--since]`, `review
-[--since]`, `costs [--month]` (T1.8 issue #14; `review` added in T1.11 issue #17).
+[--since]`, `costs [--month]`, `open` (T1.8 issue #14; `review` added in T1.11
+issue #17; `open` added in T2.4 issue #44).
 
 The seam between the deterministic worker and everything else: hermes runs these
 subcommands verbatim (no MCP server, no RPC), cron/systemd read the exit code,
@@ -349,6 +350,92 @@ def cmd_costs(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- open --------------------------------------------------------------------
+
+
+def _actionable_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """The standing actionable set the digests/hermes rundown care about:
+    Action-Needed by category, or P1/P2 by priority regardless of category."""
+    return conn.execute(
+        "SELECT cc.gmail_message_id, cc.category, cc.priority, cc.reasoning, "
+        "       m.sender, m.subject, m.thread_id "
+        "FROM current_classifications cc "
+        "JOIN messages m ON m.gmail_message_id = cc.gmail_message_id "
+        "WHERE cc.category = 'Action-Needed' "
+        "   OR cc.priority IN ('P1-Urgent', 'P2-This-Week') "
+        "ORDER BY cc.classified_at"
+    ).fetchall()
+
+
+def _thread_state(svc, thread_id: str, message_id: str) -> tuple[bool, bool, bool]:
+    """One Gmail call → (read, archived, replied) for one actionable item.
+
+    format='minimal' returns id + labelIds per message — enough for all three
+    signals, no bodies fetched. 'replied' checks the whole thread for a SENT
+    message (Jenit's own reply); 'read'/'archived' key off the classified
+    message's own labels.
+    """
+    thread = (
+        svc.users().threads().get(userId="me", id=thread_id, format="minimal").execute()
+    )
+    messages = thread.get("messages", [])
+    own = next((m for m in messages if m["id"] == message_id), {})
+    labels = set(own.get("labelIds", []))
+    replied = any("SENT" in m.get("labelIds", []) for m in messages)
+    return "UNREAD" not in labels, "INBOX" not in labels, replied
+
+
+def cmd_open(args: argparse.Namespace) -> int:
+    """Actionable set (Action-Needed / P1 / P2), cross-checked against live
+    Gmail: cleared the moment Gmail shows it read, archived, or replied to —
+    the disjunction of #37's three signals (open needs all three to fail).
+
+    Read-only — the only Gmail call is threads().get. Never prints a partial
+    list: a Gmail failure aborts loudly before anything is printed, since a
+    half-verified "still open" list is worse than none (grounding rule, #37).
+    """
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    rows = _actionable_rows(conn)
+    if not rows:
+        print("0 actionable in DB · 0 open · 0 cleared")
+        return 0
+
+    try:
+        creds = gmail.get_credentials(cfg)
+        svc = gmail.service(creds)
+        states = [
+            _thread_state(svc, r["thread_id"], r["gmail_message_id"]) for r in rows
+        ]
+    except Exception as e:
+        print(f"Gmail check failed — no list printed: {e}", file=sys.stderr)
+        return 1
+
+    open_lines, cleared_lines = [], []
+    for row, (read, archived, replied) in zip(rows, states):
+        label = row["priority"] or row["category"]
+        sender = (row["sender"] or "")[:24]
+        reason = (row["reasoning"] or row["subject"] or "")[:60]
+        line = f"  {label} · {sender} · {reason}"
+        if replied or archived or read:
+            why = "replied" if replied else "archived" if archived else "read"
+            cleared_lines.append(f"{line} — {why}")
+        else:
+            open_lines.append(line)
+
+    print(f"Open — Gmail-verified ({len(open_lines)}):")
+    if open_lines:
+        print("\n".join(open_lines))
+    if cleared_lines:
+        print(f"Cleared since triage ({len(cleared_lines)}):")
+        print("\n".join(cleared_lines))
+    print(
+        f"{len(rows)} actionable in DB · {len(open_lines)} open · "
+        f"{len(cleared_lines)} cleared"
+    )
+    return 0
+
+
 # --- entry point ---------------------------------------------------------------
 
 
@@ -374,6 +461,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_costs = sub.add_parser("costs", help="spend by model/component vs budget cap")
     p_costs.add_argument("--month", default=None, help="YYYY-MM, default current month")
     p_costs.set_defaults(func=cmd_costs)
+
+    p_open = sub.add_parser(
+        "open", help="actionable set, Gmail-verified still-open (read-only)"
+    )
+    p_open.set_defaults(func=cmd_open)
 
     return parser
 

@@ -67,7 +67,7 @@ def _compose(fresh: list[tuple[str, sqlite3.Row, Verdict]]) -> str:
     Phase-2 intent resolves a bare numeric reference; see #42 decisions)."""
     if len(fresh) == 1:
         _, row, verdict = fresh[0]
-        return f'🔴 Urgent — {row["sender"]}\n{verdict.reasoning}\n"{row["subject"]}"'
+        return f"🔴 Urgent — {row['sender']} — {row['subject']} \n{verdict.reasoning}"
     lines = [f"🔴 {len(fresh)} urgent — caught up"]
     lines += [f"• {row['sender']} · {verdict.reasoning}" for _, row, verdict in fresh]
     return "\n".join(lines)
@@ -124,3 +124,220 @@ def notify_p1(
         return
 
     _record(conn, actions, run_id, "confirmed", None)
+
+
+# --- operational pings (T2.3, #43) -------------------------------------------
+# Budget-breach, consecutive-failure, OAuth-death and recovery alerts. Formats
+# and thresholds are signed off in #38; this is only the send/dedupe wiring.
+# Same contract as notify_p1: one action_events row per ping (here with no
+# gmail_message_id), audit-before-write, and never raises. Unlike P1 these fire
+# regardless of dry_run — they report real worker state (spend, crashes, dead
+# auth), which is just as real during the dry-run trial (#43 decision).
+
+FAILURE_THRESHOLD = 5  # consecutive crashed runs before the failure alert (#38)
+
+
+def _record_op(
+    conn: sqlite3.Connection,
+    action_id: str,
+    run_id: str,
+    action_type: str,
+    status: str,
+    detail: str | None,
+    error: str | None,
+) -> None:
+    conn.execute(
+        "INSERT INTO action_events"
+        "(action_id, status, action_type, actor, run_id, detail, error, recorded_at)"
+        " VALUES (?, ?, ?, 'worker', ?, ?, ?, ?)",
+        (action_id, status, action_type, run_id, detail, error, store.now_iso()),
+    )
+    conn.commit()
+
+
+def _send_op(
+    conn: sqlite3.Connection,
+    run_id: str,
+    token: str,
+    chat_id: str,
+    action_type: str,
+    text: str,
+    detail: str | None,
+    send_fn: SendFn | None,
+) -> None:
+    """intended -> send -> confirmed/failed for one operational ping. Never raises
+    (same isolation as notify_p1: a flaky Telegram must not break the run)."""
+    action_id = store.new_id()
+    _record_op(conn, action_id, run_id, action_type, "intended", detail, None)
+    do_send = send_fn or send
+    try:
+        do_send(token, chat_id, text)
+    except Exception as e:
+        _record_op(conn, action_id, run_id, action_type, "failed", detail, str(e))
+        return
+    _record_op(conn, action_id, run_id, action_type, "confirmed", detail, None)
+
+
+def _last_triage_success(conn: sqlite3.Connection) -> str | None:
+    """recorded_at of the last completed run (ok or per-message-error), or None.
+    A crashed run writes status='failed', so it's excluded — that's the boundary
+    the failure streak and recovery both measure from."""
+    return conn.execute(
+        "SELECT MAX(recorded_at) FROM run_events "
+        "WHERE phase='triage' AND status IN ('ok','error')"
+    ).fetchone()[0]
+
+
+def notify_failure(
+    conn: sqlite3.Connection,
+    run_id: str,
+    token: str,
+    chat_id: str,
+    last_error: str,
+    *,
+    send_fn: SendFn | None = None,
+) -> None:
+    """Fire once when consecutive crashed runs reach FAILURE_THRESHOLD (#38).
+    Call from the run's crash path *after* its status='failed' triage row is
+    written. The streak = 'failed' triage rows since the last ok/error; dedupe =
+    at most one failure_ping per streak (none newer than that last success)."""
+    streak = conn.execute(
+        "SELECT COUNT(*) FROM run_events WHERE phase='triage' AND status='failed' "
+        "AND event_id > COALESCE("
+        "  (SELECT MAX(event_id) FROM run_events WHERE phase='triage' "
+        "   AND status IN ('ok','error')), 0)"
+    ).fetchone()[0]
+    if streak < FAILURE_THRESHOLD:
+        return
+    last_ok = _last_triage_success(conn)
+    already = conn.execute(
+        "SELECT 1 FROM action_events WHERE action_type='failure_ping' "
+        "AND status='confirmed' AND recorded_at > ? LIMIT 1",
+        (last_ok or "",),
+    ).fetchone()
+    if already:
+        return
+    success = f"{store.clock(last_ok)} ({store.age(last_ok)})" if last_ok else "never"
+    text = (
+        f"⚠️ Worker failing — {streak} runs in a row\n"
+        f"Last error: {last_error}\n"
+        f"Last success: {success}\n"
+        "`assistant status` for detail."
+    )
+    _send_op(
+        conn,
+        run_id,
+        token,
+        chat_id,
+        "failure_ping",
+        text,
+        f"{streak} consecutive",
+        send_fn,
+    )
+
+
+def notify_recovery(
+    conn: sqlite3.Connection,
+    run_id: str,
+    token: str,
+    chat_id: str,
+    *,
+    send_fn: SendFn | None = None,
+) -> None:
+    """On a clean completion, fire once if an unacknowledged alert is outstanding
+    — the latest failure_ping or oauth_ping is newer than the latest recovery_ping.
+    One recovery message covers both a failure streak and an OAuth outage (#43)."""
+    last_alert, last_recovery = conn.execute(
+        "SELECT "
+        "(SELECT MAX(recorded_at) FROM action_events "
+        " WHERE action_type IN ('failure_ping','oauth_ping') AND status='confirmed'), "
+        "(SELECT MAX(recorded_at) FROM action_events "
+        " WHERE action_type='recovery_ping' AND status='confirmed')"
+    ).fetchone()
+    if last_alert is None or (
+        last_recovery is not None and last_alert <= last_recovery
+    ):
+        return
+    text = f"✅ Worker recovered — back to normal at {store.clock(store.now_iso())}."
+    _send_op(conn, run_id, token, chat_id, "recovery_ping", text, None, send_fn)
+
+
+def notify_budget(
+    conn: sqlite3.Connection,
+    run_id: str,
+    token: str,
+    chat_id: str,
+    *,
+    soft_cap: float,
+    monthly_cap: float,
+    send_fn: SendFn | None = None,
+) -> None:
+    """Fire once on the first run of a UTC day whose cumulative spend crosses the
+    daily soft cap (#38). UTC not local (#43) — matches the cost ledger and what
+    `assistant costs` shows. Ping-only; nothing pauses."""
+    today = store.now_iso()[:10]
+    spend = conn.execute(
+        "SELECT COALESCE(SUM(cost_usd), 0) FROM llm_calls WHERE created_at LIKE ?",
+        (f"{today}%",),
+    ).fetchone()[0]
+    if spend <= soft_cap:
+        return
+    already = conn.execute(
+        "SELECT 1 FROM action_events WHERE action_type='budget_ping' "
+        "AND status='confirmed' AND recorded_at LIKE ? LIMIT 1",
+        (f"{today}%",),
+    ).fetchone()
+    if already:
+        return
+    text = (
+        "💸 Daily budget — soft cap passed\n"
+        f"Today: ${spend:.2f} / ${soft_cap:.2f} soft cap\n"
+        f"Nothing paused; ${monthly_cap:.0f}/mo console hard cap still guards.\n"
+        "`assistant costs` for the breakdown."
+    )
+    _send_op(
+        conn,
+        run_id,
+        token,
+        chat_id,
+        "budget_ping",
+        text,
+        f"${spend:.2f}/${soft_cap:.2f}",
+        send_fn,
+    )
+
+
+def notify_oauth_death(
+    conn: sqlite3.Connection,
+    run_id: str,
+    token: str,
+    chat_id: str,
+    error: str,
+    *,
+    send_fn: SendFn | None = None,
+) -> None:
+    """Fire immediately on permanent auth failure (gmail.AuthError), once per
+    outage. get_credentials runs before any run_event, so an auth death writes
+    none and never feeds the failure counter (#38); dedupe instead keys on the
+    last successful auth (the last triage 'started' row) — silent until a later
+    run authenticates again."""
+    last_auth = conn.execute(
+        "SELECT MAX(recorded_at) FROM run_events "
+        "WHERE phase='triage' AND status='started'"
+    ).fetchone()[0]
+    already = conn.execute(
+        "SELECT 1 FROM action_events WHERE action_type='oauth_ping' "
+        "AND status='confirmed' AND recorded_at > ? LIMIT 1",
+        (last_auth or "",),
+    ).fetchone()
+    if already:
+        return
+    last_ok = _last_triage_success(conn)
+    good = store.clock(last_ok) if last_ok else "never"
+    text = (
+        "🔑 Gmail auth dead — worker stopped\n"
+        "Token refresh failed permanently; every run fails until you re-auth.\n"
+        "Fix: delete secrets/token.json, then `uv run python -m assistant.gmail`\n"
+        f"Since {store.clock(store.now_iso())} · last good run {good}"
+    )
+    _send_op(conn, run_id, token, chat_id, "oauth_ping", text, error[:120], send_fn)

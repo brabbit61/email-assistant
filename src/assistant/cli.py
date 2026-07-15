@@ -40,10 +40,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     # force-dries a single manual invocation. Either one suppresses every write.
     dry = args.dry_run or cfg.dry_run
     conn = store.open_db(cfg.db_path)
-    svc = gmail.service(gmail.get_credentials(cfg))
+    run_id = store.new_id()
+    tok, chat = cfg.secrets.telegram_token, cfg.secrets.telegram_chat_id
+
+    try:
+        creds = gmail.get_credentials(cfg)
+    except gmail.AuthError as e:
+        # Auth dies before any run_event is written (so it never feeds the
+        # failure counter); the OAuth ping fires regardless of dry_run (#43).
+        telegram.notify_oauth_death(conn, run_id, tok, chat, str(e))
+        raise  # main() prints it and exits 1
+
+    svc = gmail.service(creds)
     client = classify.make_client(cfg.secrets.anthropic_api_key)
 
-    run_id = store.new_id()
     conn.execute(
         "INSERT INTO run_events(run_id, phase, status, recorded_at) "
         "VALUES (?, 'triage', 'started', ?)",
@@ -51,54 +61,75 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     conn.commit()
 
-    poll_result = poll.poll_once(conn, svc)
-
     lines: list[str] = []
     labeled = 0
     errors = 0
     p1_hits: list[tuple[str, sqlite3.Row, Verdict]] = []
-    rows = _messages_needing_classification(conn)
-    for row in rows:
-        verdict, usage = classify.classify(
-            client,
-            cfg.classifier_model,
-            Email(row["sender"], row["subject"], row["body"]),
-        )
-        classify.record(conn, row["gmail_message_id"], verdict, usage, actor="worker")
-        if verdict.category == UNCLASSIFIED:
-            continue
-        try:
-            result = apply.apply_verdict(
-                conn,
-                svc,
-                run_id,
-                row["gmail_message_id"],
-                verdict,
-                actor="worker",
-                auto_archive=cfg.auto_archive_low_value,
-                dry_run=dry,
+    try:
+        poll_result = poll.poll_once(conn, svc)
+        rows = _messages_needing_classification(conn)
+        for row in rows:
+            verdict, usage = classify.classify(
+                client,
+                cfg.classifier_model,
+                Email(row["sender"], row["subject"], row["body"]),
             )
-        except Exception as e:  # one poisoned message must not abort the batch
-            errors += 1
-            lines.append(f"  ERROR    {row['gmail_message_id']}  {e}")
-            continue
-        labeled += 1
-        if verdict.priority == "P1-Urgent":
-            p1_hits.append((row["gmail_message_id"], row, verdict))
-        tag = " ".join(result.labels)
-        subject = (row["subject"] or "(no subject)")[:50]
-        lines.append(f"  {row['gmail_message_id']:<16}  {tag:<28}  {subject}")
+            classify.record(
+                conn, row["gmail_message_id"], verdict, usage, actor="worker"
+            )
+            if verdict.category == UNCLASSIFIED:
+                continue
+            try:
+                result = apply.apply_verdict(
+                    conn,
+                    svc,
+                    run_id,
+                    row["gmail_message_id"],
+                    verdict,
+                    actor="worker",
+                    auto_archive=cfg.auto_archive_low_value,
+                    dry_run=dry,
+                )
+            except Exception as e:  # one poisoned message must not abort the batch
+                errors += 1
+                lines.append(f"  ERROR    {row['gmail_message_id']}  {e}")
+                continue
+            labeled += 1
+            if verdict.priority == "P1-Urgent":
+                p1_hits.append((row["gmail_message_id"], row, verdict))
+            tag = " ".join(result.labels)
+            subject = (row["subject"] or "(no subject)")[:50]
+            lines.append(f"  {row['gmail_message_id']:<16}  {tag:<28}  {subject}")
 
-    # Ping is best-effort and isolated inside notify_p1: it never raises, never
-    # touches run_events, and a dry run sends nothing (nothing's real yet).
-    if p1_hits and not dry:
-        telegram.notify_p1(
-            conn,
-            run_id,
-            cfg.secrets.telegram_token,
-            cfg.secrets.telegram_chat_id,
-            p1_hits,
+        # Ping is best-effort and isolated inside notify_p1: it never raises,
+        # never touches run_events, and a dry run sends nothing (nothing's real).
+        if p1_hits and not dry:
+            telegram.notify_p1(conn, run_id, tok, chat, p1_hits)
+    except Exception as e:
+        # A crashed run (poll/classify blew up): record the triage terminal as
+        # 'failed' — the streak signal notify_failure counts — then alert if the
+        # streak hit the threshold, and let the error propagate (exit non-zero,
+        # next timer tick retries). Operational pings ignore dry_run (#43).
+        conn.execute(
+            "INSERT INTO run_events(run_id, phase, status, recorded_at) "
+            "VALUES (?, 'triage', 'failed', ?)",
+            (run_id, store.now_iso()),
         )
+        conn.commit()
+        telegram.notify_failure(conn, run_id, tok, chat, str(e))
+        raise
+
+    # Clean completion: recovery ping if an alert is outstanding, then the daily
+    # budget-breach check. Both fire regardless of dry_run (#43).
+    telegram.notify_recovery(conn, run_id, tok, chat)
+    telegram.notify_budget(
+        conn,
+        run_id,
+        tok,
+        chat,
+        soft_cap=cfg.daily_usd_soft_cap,
+        monthly_cap=cfg.monthly_usd_cap,
+    )
 
     status = "ok" if errors == 0 else "error"
     conn.execute(
@@ -140,20 +171,6 @@ def cmd_run(args: argparse.Namespace) -> int:
 # --- status --------------------------------------------------------------------
 
 
-def _age(recorded_at: str) -> str:
-    then = datetime.strptime(recorded_at, "%Y-%m-%dT%H:%M:%SZ").replace(
-        tzinfo=timezone.utc
-    )
-    seconds = (datetime.now(timezone.utc) - then).total_seconds()
-    if seconds < 60:
-        return "just now"
-    if seconds < 3600:
-        return f"{int(seconds // 60)}m ago"
-    if seconds < 86400:
-        return f"{int(seconds // 3600)}h ago"
-    return f"{int(seconds // 86400)}d ago"
-
-
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = config.load()
     conn = store.open_db(cfg.db_path)
@@ -177,7 +194,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     if ckpt:
         print(
-            f"Checkpoint:   historyId {ckpt['history_id']}, {_age(ckpt['recorded_at'])}"
+            f"Checkpoint:   historyId {ckpt['history_id']}, {store.age(ckpt['recorded_at'])}"
         )
     else:
         print("Checkpoint:   none — worker has never run")
@@ -185,7 +202,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(
             f"Last run:     {last_run['status']} — {last_run['messages_seen']} "
             f"messages, {last_run['actions_taken']} actions, "
-            f"{last_run['error_count']} errors ({_age(last_run['recorded_at'])})"
+            f"{last_run['error_count']} errors ({store.age(last_run['recorded_at'])})"
         )
     else:
         print("Last run:     never")

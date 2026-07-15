@@ -368,6 +368,116 @@ def test_config_gate_dries_run_without_the_flag(tmp_path, monkeypatch, capsys):
     )
 
 
+# --- operational pings wired through cmd_run (T2.3, #43) ----------------------
+
+
+def _capture_send(monkeypatch):
+    sent: list[str] = []
+    monkeypatch.setattr(telegram, "send", lambda tok, chat, text: sent.append(text))
+    return sent
+
+
+def test_run_oauth_death_pings_and_propagates(tmp_path, monkeypatch):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+
+    def dead_auth(cfg):
+        raise gmail.AuthError("token refresh failed permanently")
+
+    monkeypatch.setattr(gmail, "get_credentials", dead_auth)
+    sent = _capture_send(monkeypatch)
+
+    with pytest.raises(gmail.AuthError):
+        cli.cmd_run(argparse.Namespace(dry_run=False))
+
+    assert any("auth dead" in s.lower() for s in sent)
+    conn = store.open_db(root / "data" / "triage.db")
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM action_events "
+            "WHERE action_type='oauth_ping' AND status='confirmed'"
+        ).fetchone()[0]
+        == 1
+    )
+    # auth dies before any run_event → never feeds the failure counter
+    assert conn.execute("SELECT COUNT(*) FROM run_events").fetchone()[0] == 0
+
+
+def test_run_failure_streak_pings_after_five_crashes(tmp_path, monkeypatch):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: object())
+    monkeypatch.setattr(classify, "make_client", lambda key: object())
+
+    def crash(conn, svc):
+        raise RuntimeError("HttpError 503 (Gmail)")
+
+    monkeypatch.setattr(poll, "poll_once", crash)
+    sent = _capture_send(monkeypatch)
+
+    for _ in range(5):
+        with pytest.raises(RuntimeError):
+            cli.cmd_run(argparse.Namespace(dry_run=False))
+
+    assert len(sent) == 1  # only the 5th crash pings
+    assert "5 runs in a row" in sent[0]
+    conn = store.open_db(root / "data" / "triage.db")
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM run_events WHERE phase='triage' AND status='failed'"
+        ).fetchone()[0]
+        == 5
+    )
+
+
+def test_run_recovery_pings_after_the_outage_clears(tmp_path, monkeypatch):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: FakeService())
+    monkeypatch.setattr(classify, "make_client", lambda key: object())
+    sent = _capture_send(monkeypatch)
+
+    def crash(conn, svc):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(poll, "poll_once", crash)
+    for _ in range(5):
+        with pytest.raises(RuntimeError):
+            cli.cmd_run(argparse.Namespace(dry_run=False))
+
+    # worker recovers on the next run
+    monkeypatch.setattr(
+        poll, "poll_once", lambda conn, svc: RunResult(0, 0, False, "1")
+    )
+    code = cli.cmd_run(argparse.Namespace(dry_run=False))
+
+    assert code == 0
+    assert any("recovered" in s.lower() for s in sent)
+
+
+def test_run_pings_budget_when_daily_soft_cap_crossed(tmp_path, monkeypatch):
+    root = _make_repo(tmp_path)
+    svc = FakeService()
+    _patch_run(monkeypatch, root, svc, [], poll_result=RunResult(0, 0, False, "1"))
+    sent = _capture_send(monkeypatch)
+    conn = store.open_db(root / "data" / "triage.db")
+    today = store.now_iso()[:10]
+    conn.execute(
+        "INSERT INTO llm_calls"
+        "(actor, purpose, model, input_tokens, output_tokens, cost_usd, created_at) "
+        "VALUES ('worker', 'classify', 'm', 1, 1, 0.90, ?)",
+        (f"{today}T08:00:00Z",),
+    )
+    conn.commit()
+
+    code = cli.cmd_run(argparse.Namespace(dry_run=False))
+
+    assert code == 0
+    assert any("soft cap passed" in s.lower() for s in sent)
+
+
 def test_review_lists_classifications_with_reasoning_and_since_filter(
     tmp_path, monkeypatch, capsys
 ):

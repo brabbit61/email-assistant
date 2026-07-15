@@ -138,6 +138,27 @@ def new_id() -> str:
     return uuid.uuid4().hex
 
 
+def clock(recorded_at: str) -> str:
+    """HH:MM (UTC) from a schema timestamp — for ping/status human output."""
+    return recorded_at[11:16]
+
+
+def age(recorded_at: str) -> str:
+    """Human 'time since' for a schema timestamp: 'just now' / 'Nm ago' / 'Nh
+    ago' / 'Nd ago'. Shared by `assistant status` and the worker's alert pings."""
+    then = datetime.strptime(recorded_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc
+    )
+    seconds = (datetime.now(timezone.utc) - then).total_seconds()
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m ago"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h ago"
+    return f"{int(seconds // 86400)}d ago"
+
+
 def connect(db_path: Path | str) -> sqlite3.Connection:
     """Open a connection with the project's pragmas set. Creates the data dir."""
     db_path = Path(db_path)

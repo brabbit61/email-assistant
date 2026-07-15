@@ -16,8 +16,8 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 
-from assistant import apply, classify, config, gmail, poll, store
-from assistant.classify import UNCLASSIFIED, Email
+from assistant import apply, classify, config, gmail, poll, store, telegram
+from assistant.classify import UNCLASSIFIED, Email, Verdict
 
 # --- run ---------------------------------------------------------------------
 
@@ -56,6 +56,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     lines: list[str] = []
     labeled = 0
     errors = 0
+    p1_hits: list[tuple[str, sqlite3.Row, Verdict]] = []
     rows = _messages_needing_classification(conn)
     for row in rows:
         verdict, usage = classify.classify(
@@ -82,9 +83,22 @@ def cmd_run(args: argparse.Namespace) -> int:
             lines.append(f"  ERROR    {row['gmail_message_id']}  {e}")
             continue
         labeled += 1
+        if verdict.priority == "P1-Urgent":
+            p1_hits.append((row["gmail_message_id"], row, verdict))
         tag = " ".join(result.labels)
         subject = (row["subject"] or "(no subject)")[:50]
         lines.append(f"  {row['gmail_message_id']:<16}  {tag:<28}  {subject}")
+
+    # Ping is best-effort and isolated inside notify_p1: it never raises, never
+    # touches run_events, and a dry run sends nothing (nothing's real yet).
+    if p1_hits and not dry:
+        telegram.notify_p1(
+            conn,
+            run_id,
+            cfg.secrets.telegram_token,
+            cfg.secrets.telegram_chat_id,
+            p1_hits,
+        )
 
     status = "ok" if errors == 0 else "error"
     conn.execute(

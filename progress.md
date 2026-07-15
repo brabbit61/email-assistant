@@ -183,6 +183,20 @@ Bound hermes-agent's messaging gateway to the Phase 0 Telegram bot (#4) and lock
 
 **How it was verified:** `hermes gateway status` confirmed `active`/`enabled` with a stable PID (no crash loop) after install. Jenit ran both phone-side tests from his own Telegram — round-trip (message → reply) and the inversion test (silence under a wrong allowlist id, then restored) — both passed 2026-07-14.
 
+### #42 — T2.2 Worker Telegram notifier + P1 urgent ping path
+**Status:** Closed
+
+New `src/assistant/telegram.py` (`send` — raw stdlib POST, no new deps; `notify_p1` — dedupe/burst/audit orchestration), wired into `cli.py`'s `cmd_run`: every newly-classified `P1-Urgent` this run gets pinged, collapsed into one combined message on a burst.
+
+**Decided:**
+- **Two #38 mockup lines don't survive contact with a send-only worker.** Dropped the burst's "Reply with a number to open" — the worker never receives replies (only the hermes gateway polls, #41) and no Phase-2 conversation-playbook intent resolves a bare numeric reference, so the line would promise something that goes nowhere. The single-ping mockup's draft-link line stays omitted, per #38's own grounding rule (no drafting until Phase 3).
+- **Ping failures are fully isolated from run health.** A failed send is recorded as a `failed` action_event (visible via `assistant audit`) but never raises, never increments `error_count`, never flips `run_events.status`, never affects the CLI exit code — so a flaky Telegram API can't trip #38's N=5-consecutive-failure alert (reserved for actual Gmail/triage failures) or make `assistant status` call a healthy worker unhealthy.
+- **Dedupe/audit reuses the existing `action_events` audit-before-write pattern exactly**, mirroring `apply.py`: one `intended` row per message before the send, `confirmed`/`failed` after — `action_type='telegram_ping'`, dedupe = "any `confirmed` row ever for this `gmail_message_id`." A burst still writes one row per message even though it's a single API call, same as label_add+archive today.
+- **Secrets/config scope bullet was already satisfied** — `cfg.secrets.telegram_token`/`telegram_chat_id` have been loaded and validated since T1.1 (#7); no new work needed there.
+- **A Python default-argument gotcha caught before it shipped:** `notify_p1`'s send function is looked up from the module at call time (`send_fn or send`, not `send_fn: SendFn = send`) specifically so `monkeypatch.setattr(telegram, "send", fake)` in a future `test_cli.py` test actually intercepts the call — a bound default would have silently kept hitting the real network.
+
+**How it was verified:** automated — `tests/test_telegram.py` (9 cases: send-URL/payload/timeout construction, non-2xx and network-error handling, single/burst compose, dedupe, cross-run dedupe, failure isolation, retry-after-failure, no-op on empty hits) plus 4 new cases in `tests/test_cli.py` (P1 triggers a real send call end-to-end through `cmd_run`, non-P1 sends nothing, dry-run sends nothing even for P1, a failing send leaves the run `status='ok'` and exit code 0) — all hand-rolled fakes at the send seam, no network, mirroring `test_apply.py`'s style. Live — Jenit crafted a P1 self-email and confirmed a real Telegram ping arrived within one poll interval, 2026-07-14.
+
 ## Open / not yet started
 - #5 sign-off (hermes pin v2026.7.7.2, install layout, model config — comment posted on the issue)
 - #10 visual sign-off (Jenit to confirm labels look right in Gmail web + mobile)

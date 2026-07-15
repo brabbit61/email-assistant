@@ -9,7 +9,7 @@ import argparse
 
 import pytest
 
-from assistant import classify, cli, config, gmail, poll, store
+from assistant import classify, cli, config, gmail, poll, store, telegram
 from assistant.classify import Usage, Verdict
 from assistant.labels import FULL_NAME
 from assistant.poll import RunResult
@@ -156,6 +156,146 @@ def test_run_classifies_and_labels_new_messages(tmp_path, monkeypatch, capsys):
         ).fetchone()["status"]
         == "ok"
     )
+
+
+def test_run_pings_telegram_on_p1_and_records_confirmed_action(
+    tmp_path, monkeypatch, capsys
+):
+    root = _make_repo(tmp_path)
+    svc = FakeService()
+    _patch_run(
+        monkeypatch,
+        root,
+        svc,
+        [
+            (
+                Verdict("Finance", "P1-Urgent", "failed autopay, bill due today"),
+                Usage("claude-haiku-4-5-20251001", 10, 5),
+            ),
+        ],
+        poll_result=RunResult(1, 1, False, "200"),
+    )
+    sent = []
+    monkeypatch.setattr(
+        telegram,
+        "send",
+        lambda token, chat_id, text: sent.append((token, chat_id, text)),
+    )
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_messages(conn, ["m1"])
+
+    code = cli.cmd_run(argparse.Namespace(dry_run=False))
+
+    assert code == 0
+    assert len(sent) == 1
+    token, chat_id, text = sent[0]
+    assert (token, chat_id) == ("000:test", "1")  # from _make_repo's secrets/.env
+    assert "failed autopay, bill due today" in text
+    confirmed = conn.execute(
+        "SELECT COUNT(*) FROM action_events "
+        "WHERE action_type='telegram_ping' AND status='confirmed'"
+    ).fetchone()[0]
+    assert confirmed == 1
+
+
+def test_run_sends_no_ping_for_non_p1_mail(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    svc = FakeService()
+    _patch_run(
+        monkeypatch,
+        root,
+        svc,
+        [
+            (
+                Verdict("Newsletters", None, "weekly digest"),
+                Usage("claude-haiku-4-5-20251001", 8, 4),
+            ),
+        ],
+        poll_result=RunResult(1, 1, False, "200"),
+    )
+    sent = []
+    monkeypatch.setattr(
+        telegram,
+        "send",
+        lambda token, chat_id, text: sent.append((token, chat_id, text)),
+    )
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_messages(conn, ["m1"])
+
+    code = cli.cmd_run(argparse.Namespace(dry_run=False))
+
+    assert code == 0
+    assert sent == []
+
+
+def test_run_dry_run_sends_no_ping_even_for_p1(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    svc = FakeService()
+    _patch_run(
+        monkeypatch,
+        root,
+        svc,
+        [
+            (
+                Verdict("Finance", "P1-Urgent", "wire confirmation needed"),
+                Usage("claude-haiku-4-5-20251001", 10, 5),
+            ),
+        ],
+        poll_result=RunResult(1, 1, False, "200"),
+    )
+    sent = []
+    monkeypatch.setattr(
+        telegram,
+        "send",
+        lambda token, chat_id, text: sent.append((token, chat_id, text)),
+    )
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_messages(conn, ["m1"])
+
+    code = cli.cmd_run(argparse.Namespace(dry_run=True))
+
+    assert code == 0
+    assert sent == []
+
+
+def test_run_ping_failure_does_not_fail_the_run(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    svc = FakeService()
+    _patch_run(
+        monkeypatch,
+        root,
+        svc,
+        [
+            (
+                Verdict("Finance", "P1-Urgent", "urgent"),
+                Usage("claude-haiku-4-5-20251001", 10, 5),
+            ),
+        ],
+        poll_result=RunResult(1, 1, False, "200"),
+    )
+
+    def failing_send(token, chat_id, text):
+        raise RuntimeError("telegram outage")
+
+    monkeypatch.setattr(telegram, "send", failing_send)
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_messages(conn, ["m1"])
+
+    code = cli.cmd_run(argparse.Namespace(dry_run=False))
+
+    assert code == 0  # ping failure must never fail the triage run
+    out = capsys.readouterr().out
+    assert "0 error(s)." in out
+    failed = conn.execute(
+        "SELECT COUNT(*) FROM action_events "
+        "WHERE action_type='telegram_ping' AND status='failed'"
+    ).fetchone()[0]
+    assert failed == 1
+    status = conn.execute(
+        "SELECT status FROM run_events WHERE phase='triage' AND status IS NOT NULL "
+        "ORDER BY event_id DESC LIMIT 1"
+    ).fetchone()["status"]
+    assert status == "ok"  # notification health != triage health
 
 
 def test_run_dry_run_records_cost_but_writes_no_gmail_mutations(

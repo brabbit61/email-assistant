@@ -133,16 +133,6 @@ fixtures:
       48 hours or the package will be returned to sender. Confirm now
       using the link below.
 
-  - name: tiebreak-human-tech
-    expected_category: Work
-    sender: Lena Fischer <lena@example.com>
-    subject: prod deploy is broken — can you take a look?
-    body: |
-      Hey, the 2pm deploy went out and the checkout service is throwing
-      500s in production. I've rolled back for now but can you dig into
-      what changed? I think it might be the payment client bump. Ping me
-      when you're online.
-
   - name: tiebreak-newsletter-deadline
     expected_category: Newsletters
     expected_priority: P3-FYI

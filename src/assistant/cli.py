@@ -31,6 +31,7 @@ from assistant import (
 )
 from assistant.classify import UNCLASSIFIED, Email, Verdict
 from assistant.labels import CATEGORIES, PRIORITIES
+from assistant.pricing import PRICES
 
 # --- run ---------------------------------------------------------------------
 
@@ -375,31 +376,14 @@ def cmd_costs(args: argparse.Namespace) -> int:
 # for a model this new), so we price them ourselves and import one row per
 # *finished* session (ended_at IS NOT NULL — a session's tokens are only final
 # once it ends, so a still-open chat is picked up on a later run instead of
-# double-counted). ponytail: rates hardcoded from hermes's own model cache;
-# add a model here when hermes starts using another one.
+# double-counted). Rates come from the shared pricing.PRICES table.
 
 _HERMES_DB_PATH = Path.home() / ".hermes" / "state.db"
-
-# $ per 1M tokens.
-_HERMES_PRICES: dict[str, dict[str, float]] = {
-    "claude-sonnet-5": {  # kept for sessions already on record before the haiku switch
-        "input": 2.0,
-        "output": 10.0,
-        "cache_read": 0.2,
-        "cache_write": 2.5,
-    },
-    "claude-haiku-4-5-20251001": {  # hermes's agent model as of config.toml's switch
-        "input": 1.0,
-        "output": 5.0,
-        "cache_read": 0.1,
-        "cache_write": 1.25,
-    },
-}
 
 
 def _hermes_session_cost(row: sqlite3.Row) -> float | None:
     """USD for one hermes session, or None if its model has no local price."""
-    rates = _HERMES_PRICES.get(row["model"])
+    rates = PRICES.get(row["model"])
     if rates is None:
         return None
     return (

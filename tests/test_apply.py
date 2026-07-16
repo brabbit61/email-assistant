@@ -170,3 +170,64 @@ def test_missing_label_raises_before_any_audit_write(tmp_path):
         apply.apply_verdict(conn, svc, "run1", "m1", verdict)
 
     assert conn.execute("SELECT COUNT(*) FROM action_events").fetchone()[0] == 0
+
+
+def test_relabel_adds_and_removes_in_one_combined_call(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    svc = FakeService(ALL_LABEL_NAMES)
+
+    apply.apply_relabel(
+        conn,
+        svc,
+        "run1",
+        "m1",
+        add_names=[FULL_NAME["Personal"]],
+        remove_names=[FULL_NAME["Work"]],
+        actor="human-chat",
+    )
+
+    assert len(svc.calls) == 1  # one modify carries both add and remove
+    _, body = svc.calls[0]
+    assert body["addLabelIds"] == [f"id_{FULL_NAME['Personal']}"]
+    assert body["removeLabelIds"] == [f"id_{FULL_NAME['Work']}"]
+
+    # audit-before-write for both action types, actor threaded through
+    rows = conn.execute(
+        "SELECT action_type, status, actor FROM action_events ORDER BY event_id"
+    ).fetchall()
+    intended = [r for r in rows if r["status"] == "intended"]
+    assert {r["action_type"] for r in intended} == {"label_add", "label_remove"}
+    assert all(r["actor"] == "human-chat" for r in rows)
+    current = conn.execute("SELECT status FROM current_actions").fetchall()
+    assert len(current) == 2 and all(r["status"] == "confirmed" for r in current)
+
+
+def test_relabel_empty_is_a_noop(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    svc = FakeService(ALL_LABEL_NAMES)
+
+    apply.apply_relabel(
+        conn, svc, "run1", "m1", add_names=[], remove_names=[], actor="human-chat"
+    )
+
+    assert svc.calls == []
+    assert conn.execute("SELECT COUNT(*) FROM action_events").fetchone()[0] == 0
+
+
+def test_relabel_gmail_failure_records_failed_and_reraises(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    svc = FakeService(ALL_LABEL_NAMES, fail=True)
+
+    with pytest.raises(RuntimeError, match="gmail outage"):
+        apply.apply_relabel(
+            conn,
+            svc,
+            "run1",
+            "m1",
+            add_names=[FULL_NAME["Personal"]],
+            remove_names=[FULL_NAME["Work"]],
+            actor="human-chat",
+        )
+
+    rows = conn.execute("SELECT status FROM current_actions").fetchall()
+    assert len(rows) == 2 and all(r["status"] == "failed" for r in rows)

@@ -40,31 +40,46 @@ def current_history_id(svc: Resource) -> str:
     return svc.users().getProfile(userId="me").execute()["historyId"]
 
 
-def iter_history(svc: Resource, start_id: str) -> tuple[list[str], str]:
-    """New INBOX message ids since start_id, plus the response's latest historyId.
+def iter_history(
+    svc: Resource, start_id: str
+) -> tuple[list[str], list[tuple[str, frozenset[str]]], str]:
+    """New INBOX message ids since start_id, label-change events, and the latest historyId.
+
+    Label events are `(message_id, frozenset(label ids added or removed))` — Flow A
+    (issue #46) reads these to spot a human relabel of already-triaged mail. We drop the
+    server-side `labelId="INBOX"` filter (it would hide relabels on archived mail) and
+    filter `messagesAdded` to INBOX client-side instead, using the record's own labelIds.
 
     Drains every page. Raises HttpError(404) when start_id has aged out of Gmail's
     ~1-week history window — the caller falls back to a bounded messages.list sweep.
     """
     api = svc.users().history()
     ids: list[str] = []
+    label_events: list[tuple[str, frozenset[str]]] = []
     latest = start_id
     page_token = None
     while True:
         resp = api.list(
             userId="me",
             startHistoryId=start_id,
-            historyTypes=["messageAdded"],
-            labelId="INBOX",
+            historyTypes=["messageAdded", "labelAdded", "labelRemoved"],
             pageToken=page_token,
         ).execute()
         latest = resp.get("historyId", latest)
         for record in resp.get("history", []):
             for added in record.get("messagesAdded", []):
-                ids.append(added["message"]["id"])
+                msg = added["message"]
+                if "INBOX" in msg.get("labelIds", []):
+                    ids.append(msg["id"])
+            for changed in record.get("labelsAdded", []) + record.get(
+                "labelsRemoved", []
+            ):
+                label_events.append(
+                    (changed["message"]["id"], frozenset(changed.get("labelIds", [])))
+                )
         page_token = resp.get("nextPageToken")
         if not page_token:
-            return ids, latest
+            return ids, label_events, latest
 
 
 def list_messages_since(svc: Resource, epoch_s: int) -> list[str]:
@@ -80,6 +95,14 @@ def list_messages_since(svc: Resource, epoch_s: int) -> list[str]:
         page_token = resp.get("nextPageToken")
         if not page_token:
             return ids
+
+
+def message_labels(svc: Resource, msg_id: str) -> list[str]:
+    """A message's current Gmail label ids, via a cheap `format='minimal'` get.
+    The authoritative present state for a correction (issue #46), independent of the
+    possibly-stale label snapshot in a history event or the `messages` table."""
+    msg = svc.users().messages().get(userId="me", id=msg_id, format="minimal").execute()
+    return msg.get("labelIds", [])
 
 
 def get_message(svc: Resource, msg_id: str) -> dict:

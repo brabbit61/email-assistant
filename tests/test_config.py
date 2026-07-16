@@ -8,6 +8,7 @@ CONFIG_TOML = """\
 [models]
 classifier = "claude-haiku-4-5-20251001"
 agent = "claude-sonnet-5"
+reviewer = "claude-sonnet-5"
 
 [budget]
 monthly_usd_cap = 15.0
@@ -42,6 +43,7 @@ def test_load_valid(tmp_path):
     )
     cfg = load(home=root)
     assert cfg.classifier_model == "claude-haiku-4-5-20251001"
+    assert cfg.reviewer_model == "claude-sonnet-5"
     assert cfg.poll_interval_minutes == 5
     assert cfg.dry_run is True  # absent in CONFIG_TOML -> safe default (go-live gate)
     assert cfg.auto_archive_low_value is False  # absent in CONFIG_TOML -> default

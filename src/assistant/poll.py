@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from googleapiclient.discovery import Resource
 from googleapiclient.errors import HttpError
 
-from assistant import gmail, store
+from assistant import correct, gmail, store
 
 
 @dataclass
@@ -57,13 +57,19 @@ def poll_once(conn: sqlite3.Connection, svc: Resource) -> RunResult:
     ).fetchone()
 
     catchup = False
+    # (message_id, changed label ids) events for Flow-A relabel detection (#46).
+    # The cold-start and catch-up regimes carry none (getProfile / messages.list
+    # return no label history).
+    label_events: list[tuple[str, frozenset[str]]] = []
     if ckpt is None:
         # Cold start: forward-only. Record the baseline historyId, ingest nothing.
         ids: list[str] = []
         new_history_id = gmail.current_history_id(svc)
     else:
         try:
-            ids, new_history_id = gmail.iter_history(svc, ckpt["history_id"])
+            ids, label_events, new_history_id = gmail.iter_history(
+                svc, ckpt["history_id"]
+            )
         except HttpError as e:
             if e.resp.status != 404:
                 raise  # transient/other: fail loudly, next timer tick retries
@@ -98,6 +104,11 @@ def poll_once(conn: sqlite3.Connection, svc: Resource) -> RunResult:
         )
         inserted += cur.rowcount
     conn.commit()  # messages durable BEFORE the checkpoint advances
+
+    # Flow A: record any human relabel of already-triaged mail as a correction,
+    # after ingest (a relabel needs its message row) and before the checkpoint —
+    # same crash-safety ordering as message ingest.
+    correct.detect_relabels(conn, svc, label_events)
 
     conn.execute(
         "INSERT INTO run_events"

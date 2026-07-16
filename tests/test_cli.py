@@ -10,7 +10,7 @@ import sqlite3
 
 import pytest
 
-from assistant import classify, cli, config, gmail, poll, store, telegram
+from assistant import classify, cli, config, correct, gmail, poll, store, telegram
 from assistant.classify import Usage, Verdict
 from assistant.labels import FULL_NAME
 from assistant.poll import RunResult
@@ -21,6 +21,7 @@ CONFIG_TOML = """\
 [models]
 classifier = "claude-haiku-4-5-20251001"
 agent = "claude-sonnet-5"
+reviewer = "claude-sonnet-5"
 
 [budget]
 monthly_usd_cap = 15.0
@@ -914,3 +915,98 @@ def test_no_subcommand_prints_help_and_exits_zero(monkeypatch, capsys):
         cli.main()
     assert exc.value.code == 0
     assert "usage" in capsys.readouterr().out.lower()
+
+
+# --- correct / improvement-loop wiring (#46) ---------------------------------
+
+
+def _seed_classification(conn, mid, category, source):
+    conn.execute(
+        "INSERT INTO classifications(gmail_message_id, category, classified_at, source) "
+        "VALUES (?, ?, ?, ?)",
+        (mid, category, store.now_iso(), source),
+    )
+    conn.commit()
+
+
+def test_correct_dispatch_prints_summary_and_exits_zero(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: object())
+    monkeypatch.setattr(
+        correct, "correct", lambda *a: "Corrected m1: Work -> Personal (added X)."
+    )
+
+    code = cli.cmd_correct(
+        argparse.Namespace(id="m1", category="Personal", priority=None)
+    )
+
+    assert code == 0
+    assert "Corrected m1" in capsys.readouterr().out
+
+
+def test_correct_dispatch_unknown_id_exits_one(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: object())
+
+    def _raise(*a):
+        raise ValueError("unknown message id: m9")
+
+    monkeypatch.setattr(correct, "correct", _raise)
+
+    code = cli.cmd_correct(
+        argparse.Namespace(id="m9", category="Personal", priority=None)
+    )
+
+    assert code == 1
+    assert "unknown message id" in capsys.readouterr().err
+
+
+def test_run_leaves_human_unclassified_alone(tmp_path, monkeypatch):
+    # The retry loop reclassifies a worker UNCLASSIFIED but never a human one
+    # (Jenit removed the Gmail label — the worker must not fight it, #46 Flow A).
+    root = _make_repo(tmp_path)
+    svc = FakeService()
+    _patch_run(
+        monkeypatch,
+        root,
+        svc,
+        [
+            (
+                Verdict("Dev", None, "PR opened"),
+                Usage("claude-haiku-4-5-20251001", 10, 5),
+            )
+        ],
+    )
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_messages(conn, ["m1", "m2"])
+    _seed_classification(conn, "m1", "UNCLASSIFIED", "worker")
+    _seed_classification(conn, "m2", "UNCLASSIFIED", "human-gmail")
+
+    assert cli.cmd_run(argparse.Namespace(dry_run=False)) == 0
+
+    m1 = conn.execute(
+        "SELECT category FROM current_classifications WHERE gmail_message_id='m1'"
+    ).fetchone()
+    m2 = conn.execute(
+        "SELECT category, source FROM current_classifications WHERE gmail_message_id='m2'"
+    ).fetchone()
+    assert m1["category"] == "Dev"  # worker row retried (single verdict consumed)
+    assert (m2["category"], m2["source"]) == ("UNCLASSIFIED", "human-gmail")
+
+
+def test_status_unclassified_count_excludes_human_rows(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_messages(conn, ["m1", "m2"])
+    _seed_classification(conn, "m1", "UNCLASSIFIED", "worker")
+    _seed_classification(conn, "m2", "UNCLASSIFIED", "human-gmail")
+
+    cli.cmd_status(argparse.Namespace())
+
+    out = capsys.readouterr().out
+    assert "Unclassified: 1 message(s) awaiting retry" in out  # only the worker row

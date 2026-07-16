@@ -41,6 +41,7 @@ def _config(tmp_path):
         db_path=tmp_path / "data" / "triage.db",
         classifier_model="m",
         agent_model="m",
+        reviewer_model="m",
         monthly_usd_cap=1.0,
         daily_usd_soft_cap=1.0,
         auto_archive_low_value=False,
@@ -151,6 +152,82 @@ class _FakeSvcForGet:
 
     def messages(self):
         return _FakeMessagesGet(self._msg)
+
+
+class _FakeHistoryPage:
+    def __init__(self, resp):
+        self._resp = resp
+
+    def execute(self):
+        return self._resp
+
+
+class _FakeHistory:
+    def __init__(self, pages, captured):
+        self._pages, self._captured = pages, captured
+
+    def list(self, **kwargs):
+        self._captured.append(kwargs)
+        idx = 0 if kwargs.get("pageToken") is None else int(kwargs["pageToken"])
+        return _FakeHistoryPage(self._pages[idx])
+
+
+class _FakeSvcForHistory:
+    def __init__(self, pages):
+        self.pages, self.captured = pages, []
+
+    def users(self):
+        return self
+
+    def history(self):
+        return _FakeHistory(self.pages, self.captured)
+
+
+def test_iter_history_collects_ids_and_label_events():
+    pages = [
+        {
+            "historyId": "250",
+            "history": [
+                {
+                    "messagesAdded": [
+                        {"message": {"id": "m1", "labelIds": ["INBOX", "UNREAD"]}},
+                        {"message": {"id": "sent1", "labelIds": ["SENT"]}},  # not INBOX
+                    ]
+                },
+                {
+                    "labelsAdded": [
+                        {"message": {"id": "m2"}, "labelIds": ["Label_Work"]}
+                    ]
+                },
+            ],
+            "nextPageToken": "1",
+        },
+        {
+            "historyId": "300",
+            "history": [
+                {
+                    "labelsRemoved": [
+                        {"message": {"id": "m3"}, "labelIds": ["Label_Personal"]}
+                    ]
+                }
+            ],
+        },
+    ]
+    svc = _FakeSvcForHistory(pages)
+    ids, label_events, latest = gmail.iter_history(svc, "200")
+
+    assert ids == ["m1"]  # sent1 dropped: client-side INBOX filter on the record
+    assert latest == "300"  # drained to the last page's historyId
+    assert ("m2", frozenset({"Label_Work"})) in label_events
+    assert ("m3", frozenset({"Label_Personal"})) in label_events  # removals too
+    first = svc.captured[0]
+    assert first["historyTypes"] == ["messageAdded", "labelAdded", "labelRemoved"]
+    assert "labelId" not in first  # no server-side INBOX filter (would hide relabels)
+
+
+def test_message_labels_returns_current_label_ids():
+    svc = _FakeSvcForGet({"id": "m1", "labelIds": ["INBOX", "Label_Work"]})
+    assert gmail.message_labels(svc, "m1") == ["INBOX", "Label_Work"]
 
 
 def test_get_message_captures_auto_labels_and_raw_response():

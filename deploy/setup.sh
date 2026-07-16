@@ -52,6 +52,11 @@ systemctl --user enable --now assistant.timer
 [ -f "$ROOT/secrets/.env" ] ||
 	echo "note: secrets/.env missing — runs fail loudly until you add it (see README)."
 
+# gh powers 'assistant propose' (improvement-loop draft PRs). Optional —
+# warn, don't abort; everything else works without it.
+command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 ||
+	echo "note: gh missing or unauthenticated — 'assistant propose' (improvement-loop draft PRs) will fail until you install gh and run 'gh auth login'."
+
 if command -v hermes >/dev/null 2>&1; then
 	echo "==> linking hermes skill (repo stays the source of truth)"
 	HERMES_SKILLS="$HOME/.hermes/skills"

@@ -90,3 +90,46 @@ def test_foreign_key_enforced(tmp_path):
             "'worker', 'no-such-message', ?)",
             (new_id(), now_iso()),
         )
+
+
+def _classify(conn, mid, category, source=None):
+    cols = "gmail_message_id, category, classified_at"
+    vals = [mid, category, now_iso()]
+    if source is not None:
+        cols += ", source"
+        vals.append(source)
+    conn.execute(
+        f"INSERT INTO classifications({cols}) VALUES ({','.join('?' * len(vals))})",
+        vals,
+    )
+    conn.commit()
+
+
+def test_source_defaults_to_worker(tmp_path):
+    # v4: an insert that omits `source` (the classifier path) defaults to 'worker'.
+    conn = open_db(tmp_path / "triage.db")
+    _add_message(conn)
+    _classify(conn, "m1", "Work")
+    assert (
+        conn.execute("SELECT source FROM classifications").fetchone()["source"]
+        == "worker"
+    )
+
+
+def test_source_check_rejects_unknown_value(tmp_path):
+    conn = open_db(tmp_path / "triage.db")
+    _add_message(conn)
+    with pytest.raises(sqlite3.IntegrityError):
+        _classify(conn, "m1", "Work", source="hermes")  # not in the CHECK set
+
+
+def test_current_classifications_exposes_source(tmp_path):
+    # The `SELECT c.*` view carries the new column through unchanged.
+    conn = open_db(tmp_path / "triage.db")
+    _add_message(conn)
+    _classify(conn, "m1", "Work")  # worker
+    _classify(conn, "m1", "Personal", source="human-chat")  # supersedes
+    row = conn.execute(
+        "SELECT category, source FROM current_classifications WHERE gmail_message_id='m1'"
+    ).fetchone()
+    assert (row["category"], row["source"]) == ("Personal", "human-chat")

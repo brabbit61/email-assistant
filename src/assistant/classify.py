@@ -32,6 +32,7 @@ _RUBRIC_PATH = Path(__file__).with_name("rubric.md")
 # change. Batch API applies a flat 50% discount (see cost_usd).
 _PRICES: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5-20251001": (1.0e-6, 5.0e-6),  # $1.00 / $5.00 per 1M tokens
+    "claude-sonnet-5": (2.0e-6, 10.0e-6),  # $2.00 / $10.00 per 1M tokens (intro)
 }
 
 # Structured-output schema: the model may only return taxonomy-valid values.

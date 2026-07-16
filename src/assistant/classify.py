@@ -23,17 +23,11 @@ import anthropic
 
 from assistant import store
 from assistant.labels import CATEGORIES, PRIORITIES
+from assistant.pricing import PRICES
 
 UNCLASSIFIED = "UNCLASSIFIED"
 
 _RUBRIC_PATH = Path(__file__).with_name("rubric.md")
-
-# (input, output) USD per token. ponytail: hardcoded; edit on an Anthropic price
-# change. Batch API applies a flat 50% discount (see cost_usd).
-_PRICES: dict[str, tuple[float, float]] = {
-    "claude-haiku-4-5-20251001": (1.0e-6, 5.0e-6),  # $1.00 / $5.00 per 1M tokens
-    "claude-sonnet-5": (2.0e-6, 10.0e-6),  # $2.00 / $10.00 per 1M tokens (intro)
-}
 
 # Structured-output schema: the model may only return taxonomy-valid values.
 _SCHEMA = {
@@ -74,9 +68,10 @@ class Usage:
 def cost_usd(
     model: str, input_tokens: int, output_tokens: int, batch: bool = False
 ) -> float:
-    """USD for one call. The API returns token counts but never cost."""
-    in_rate, out_rate = _PRICES[model]
-    cost = input_tokens * in_rate + output_tokens * out_rate
+    """USD for one call. The API returns token counts but never cost. Batch API
+    applies a flat 50% discount."""
+    rates = PRICES[model]
+    cost = (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
     return cost * 0.5 if batch else cost
 
 

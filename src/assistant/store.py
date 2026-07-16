@@ -128,6 +128,14 @@ _MIGRATIONS: list[str] = [
     CREATE UNIQUE INDEX idx_llm_calls_hermes_session ON llm_calls(hermes_session_id)
         WHERE hermes_session_id IS NOT NULL;
     """,
+    """
+    -- v3 -> v4: who originated a classification (S2.4/T2.6 improvement loop).
+    -- 'worker' = the classifier; 'human-chat' = `assistant correct`; 'human-gmail'
+    -- = a relabel detected on poll. The review reads rows where source != 'worker'.
+    -- `SELECT c.*` in current_classifications carries the column through unchanged.
+    ALTER TABLE classifications ADD COLUMN source TEXT NOT NULL DEFAULT 'worker'
+        CHECK(source IN ('worker','human-chat','human-gmail'));
+    """,
 ]
 
 # Derived, not hardcoded: a literal constant here has twice drifted out of sync

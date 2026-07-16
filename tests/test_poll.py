@@ -6,7 +6,7 @@ Gmail client, no network. Mirrors test_gmail.py's hand-rolled-fake style.
 
 from googleapiclient.errors import HttpError
 
-from assistant import gmail, poll, store
+from assistant import correct, gmail, poll, store
 
 SVC = object()  # opaque: every gmail helper is monkeypatched, so svc is unused
 
@@ -54,7 +54,7 @@ def _msg_count(conn):
 def test_incremental_ingests_and_advances_checkpoint(tmp_path, monkeypatch):
     conn = store.open_db(tmp_path / "triage.db")
     _seed_checkpoint(conn, history_id="100")
-    monkeypatch.setattr(gmail, "iter_history", lambda svc, s: (["m1", "m2"], "200"))
+    monkeypatch.setattr(gmail, "iter_history", lambda svc, s: (["m1", "m2"], [], "200"))
     monkeypatch.setattr(gmail, "get_message", lambda svc, mid: _msg(mid, body=mid))
 
     result = poll.poll_once(conn, SVC)
@@ -78,12 +78,12 @@ def test_incremental_ingests_and_advances_checkpoint(tmp_path, monkeypatch):
 def test_replay_is_idempotent(tmp_path, monkeypatch):
     conn = store.open_db(tmp_path / "triage.db")
     _seed_checkpoint(conn, history_id="100")
-    monkeypatch.setattr(gmail, "iter_history", lambda svc, s: (["m1", "m2"], "200"))
+    monkeypatch.setattr(gmail, "iter_history", lambda svc, s: (["m1", "m2"], [], "200"))
     monkeypatch.setattr(gmail, "get_message", lambda svc, mid: _msg(mid))
 
     poll.poll_once(conn, SVC)
     # Same window replayed (e.g. after a crash before the checkpoint advanced).
-    monkeypatch.setattr(gmail, "iter_history", lambda svc, s: (["m1", "m2"], "200"))
+    monkeypatch.setattr(gmail, "iter_history", lambda svc, s: (["m1", "m2"], [], "200"))
     result = poll.poll_once(conn, SVC)
 
     assert result.inserted == 0  # INSERT OR IGNORE against the PK
@@ -118,6 +118,61 @@ def test_expired_historyid_triggers_bounded_sweep(tmp_path, monkeypatch):
         "SELECT COUNT(*) FROM run_events WHERE phase='catchup' AND status='gap'"
     ).fetchone()[0]
     assert gap == 1  # loud, auditable gap marker
+
+
+def test_relabel_events_forwarded_before_checkpoint(tmp_path, monkeypatch):
+    # Flow A (#46): poll_once hands label events to correct.detect_relabels, and
+    # does so *before* it writes the 'finished' checkpoint row (same crash-safety
+    # ordering as message ingest).
+    conn = store.open_db(tmp_path / "triage.db")
+    _seed_checkpoint(conn, history_id="100")
+    events = [("m1", frozenset({"Label_9"}))]
+    monkeypatch.setattr(gmail, "iter_history", lambda svc, s: (["m1"], events, "200"))
+    monkeypatch.setattr(gmail, "get_message", lambda svc, mid: _msg(mid))
+
+    captured = {}
+
+    def _detect(c, svc, label_events):
+        captured["events"] = label_events
+        captured["finished_rows_at_call"] = c.execute(
+            "SELECT COUNT(*) FROM run_events WHERE phase='finished'"
+        ).fetchone()[0]
+        return 0
+
+    monkeypatch.setattr(correct, "detect_relabels", _detect)
+
+    before = conn.execute(
+        "SELECT COUNT(*) FROM run_events WHERE phase='finished'"
+    ).fetchone()[0]
+    poll.poll_once(conn, SVC)
+
+    assert captured["events"] == events  # events forwarded verbatim
+    # This poll's 'finished' row isn't written yet when detection runs.
+    assert captured["finished_rows_at_call"] == before
+
+
+def test_catchup_forwards_no_relabel_events(tmp_path, monkeypatch):
+    # The 404 catch-up sweep carries no history, so no label events reach detection.
+    conn = store.open_db(tmp_path / "triage.db")
+    _seed_checkpoint(conn, history_id="100", recorded_at="2026-07-01T00:00:00Z")
+
+    def _raise_404(svc, start_id):
+        raise HttpError(FakeResp(404), b"{}")
+
+    monkeypatch.setattr(gmail, "iter_history", _raise_404)
+    monkeypatch.setattr(gmail, "list_messages_since", lambda svc, e: [])
+    monkeypatch.setattr(gmail, "current_history_id", lambda svc: "300")
+    seen = {}
+
+    def _detect(c, svc, ev):
+        seen["events"] = ev
+        return 0
+
+    monkeypatch.setattr(correct, "detect_relabels", _detect)
+
+    poll.poll_once(conn, SVC)
+
+    assert seen["events"] == []
 
 
 def test_cold_start_bootstraps_forward_only(tmp_path, monkeypatch):

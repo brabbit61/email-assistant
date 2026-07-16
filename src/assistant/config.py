@@ -41,6 +41,7 @@ class Config:
     db_path: Path
     classifier_model: str
     agent_model: str
+    reviewer_model: str
     monthly_usd_cap: float
     daily_usd_soft_cap: float
     poll_interval_minutes: int
@@ -87,6 +88,7 @@ def load(home: Path | None = None) -> Config:
             data = tomllib.load(f)
         classifier = data["models"]["classifier"]
         agent = data["models"]["agent"]
+        reviewer = data["models"]["reviewer"]
         monthly_cap = float(data["budget"]["monthly_usd_cap"])
         daily_cap = float(data["budget"]["daily_usd_soft_cap"])
         poll = int(data["triage"]["poll_interval_minutes"])
@@ -117,6 +119,7 @@ def load(home: Path | None = None) -> Config:
         db_path=root / "data" / "triage.db",
         classifier_model=classifier,
         agent_model=agent,
+        reviewer_model=reviewer,
         monthly_usd_cap=monthly_cap,
         daily_usd_soft_cap=daily_cap,
         poll_interval_minutes=poll,

@@ -18,20 +18,34 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from assistant import apply, classify, config, gmail, poll, store, telegram
+from assistant import (
+    apply,
+    classify,
+    config,
+    correct,
+    gmail,
+    poll,
+    propose,
+    store,
+    telegram,
+)
 from assistant.classify import UNCLASSIFIED, Email, Verdict
+from assistant.labels import CATEGORIES, PRIORITIES
 
 # --- run ---------------------------------------------------------------------
 
 
 def _messages_needing_classification(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """New messages, plus any whose latest classification is still UNCLASSIFIED —
-    the retry behavior classify.py's own docstring promises."""
+    the retry behavior classify.py's own docstring promises. A human-recorded
+    UNCLASSIFIED (a Gmail label removed by Jenit, source != 'worker') is *not*
+    retried: the worker must not fight a correction."""
     return conn.execute(
         "SELECT m.gmail_message_id, m.sender, m.subject, m.body FROM messages m "
         "LEFT JOIN current_classifications c "
         "  ON c.gmail_message_id = m.gmail_message_id "
-        "WHERE c.gmail_message_id IS NULL OR c.category = ?",
+        "WHERE c.gmail_message_id IS NULL "
+        "   OR (c.category = ? AND c.source = 'worker')",
         (UNCLASSIFIED,),
     ).fetchall()
 
@@ -186,7 +200,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         "ORDER BY event_id DESC LIMIT 1"
     ).fetchone()
     unclassified = conn.execute(
-        "SELECT COUNT(*) FROM current_classifications WHERE category = ?",
+        "SELECT COUNT(*) FROM current_classifications "
+        "WHERE category = ? AND source = 'worker'",
         (UNCLASSIFIED,),
     ).fetchone()[0]
     unconfirmed = conn.execute(
@@ -533,6 +548,44 @@ def cmd_open(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- correct (improvement loop, Flow B) --------------------------------------
+
+
+def cmd_correct(args: argparse.Namespace) -> int:
+    """Apply a chat correction (intent 8): fix the Gmail label, record a
+    human-originated re-classification. Synchronous, gated by Jenit's request —
+    one of the agent's two bounded write powers (#40, #46)."""
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    try:
+        creds = gmail.get_credentials(cfg)
+        svc = gmail.service(creds)
+        summary = correct.correct(conn, svc, args.id, args.category, args.priority)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    except gmail.AuthError:
+        raise  # let main() format auth failures consistently
+    except Exception as e:
+        print(f"Correction failed — Gmail not modified cleanly: {e}", file=sys.stderr)
+        return 1
+    print(summary)
+    return 0
+
+
+# --- propose (improvement loop, on-demand review) ----------------------------
+
+
+def cmd_propose(args: argparse.Namespace) -> int:
+    """Review corrections since the last run (intent 9): one Sonnet call judges
+    whether a recurring pattern warrants an edit to rubric.md / the skill's
+    digest+playbook sections, and if so opens a draft PR. No pattern -> no PR.
+    Nothing self-applies; Jenit reviews and merges."""
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    return propose.propose(conn, cfg, notes=args.notes, since=args.since)
+
+
 # --- entry point ---------------------------------------------------------------
 
 
@@ -571,6 +624,33 @@ def _build_parser() -> argparse.ArgumentParser:
         "--hermes-db", default=str(_HERMES_DB_PATH), help="path to hermes's state.db"
     )
     p_import_hermes.set_defaults(func=cmd_import_hermes)
+
+    p_correct = sub.add_parser(
+        "correct", help="apply a human correction: fix the Gmail label, record it"
+    )
+    p_correct.add_argument("id", help="gmail_message_id to correct")
+    p_correct.add_argument("--category", required=True, choices=CATEGORIES)
+    p_correct.add_argument(
+        "--priority",
+        choices=PRIORITIES,
+        default=None,
+        help="omit to clear any priority label",
+    )
+    p_correct.set_defaults(func=cmd_correct)
+
+    p_propose = sub.add_parser(
+        "propose",
+        help="review corrections since the last run; open a draft PR or report no pattern",
+    )
+    p_propose.add_argument(
+        "--since", default=None, help="ISO-8601: widen the window past the watermark"
+    )
+    p_propose.add_argument(
+        "--notes",
+        default=None,
+        help="behavioral/style notes (hermes memory) to fold in",
+    )
+    p_propose.set_defaults(func=cmd_propose)
 
     return parser
 

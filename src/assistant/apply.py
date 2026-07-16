@@ -100,6 +100,59 @@ def apply_verdict(
     return ApplyResult(target_names, will_archive, [a[0] for a in actions], False)
 
 
+def apply_relabel(
+    conn: sqlite3.Connection,
+    svc: Resource,
+    run_id: str,
+    gmail_message_id: str,
+    *,
+    add_names: list[str],
+    remove_names: list[str],
+    actor: str,
+) -> None:
+    """Apply a human correction to Gmail: add the new taxonomy labels, remove the
+    superseded ones, in one combined modify. Same audit-before-write contract as
+    `apply_verdict` (one `action_id` per elementary add/remove; `label_remove` is a
+    new action_type). No dry_run — a correction is an explicit, Jenit-initiated
+    action, not the unattended run the go-live gate protects."""
+    actions = [(store.new_id(), "label_add", name) for name in add_names]
+    actions += [(store.new_id(), "label_remove", name) for name in remove_names]
+    if not actions:
+        return
+
+    ids = label_ids(svc)
+    add_ids = [ids[name] for name in add_names]
+    remove_ids = [ids[name] for name in remove_names]
+
+    now = store.now_iso()
+    for action_id, action_type, detail in actions:
+        conn.execute(
+            "INSERT INTO action_events"
+            "(action_id, status, action_type, actor, run_id, gmail_message_id, "
+            " detail, recorded_at) VALUES (?, 'intended', ?, ?, ?, ?, ?, ?)",
+            (action_id, action_type, actor, run_id, gmail_message_id, detail, now),
+        )
+    conn.commit()
+
+    body: dict = {}
+    if add_ids:
+        body["addLabelIds"] = add_ids
+    if remove_ids:
+        body["removeLabelIds"] = remove_ids
+
+    try:
+        svc.users().messages().modify(
+            userId="me", id=gmail_message_id, body=body
+        ).execute()
+    except Exception as e:
+        _record_terminal(
+            conn, actions, actor, run_id, gmail_message_id, "failed", str(e)
+        )
+        raise
+
+    _record_terminal(conn, actions, actor, run_id, gmail_message_id, "confirmed", None)
+
+
 def _record_terminal(
     conn: sqlite3.Connection,
     actions: list[tuple[str, str, str]],

@@ -64,6 +64,14 @@ if command -v hermes >/dev/null 2>&1; then
 	# Without these, hermes narrates every tool call/command into the Telegram
 	# chat (interim "thinking" messages + raw tool-progress lines) — fine in a
 	# terminal, unreadable as a chatbot. Idempotent; safe to re-run.
+	# Matches config.toml's [models] agent — digests/chat need a model that
+	# reliably follows multi-constraint formatting/arithmetic instructions;
+	# Haiku was tried and dropped a lead-in sentence + miscounted digest
+	# totals on live testing (T2.5, #45).
+	echo "==> setting hermes's default model to match config.toml's [models] agent"
+	hermes config set model.default claude-sonnet-5 ||
+		echo "warning: could not set model.default"
+
 	echo "==> quieting hermes chat display for the Telegram UX"
 	hermes config set display.interim_assistant_messages false ||
 		echo "warning: could not set display.interim_assistant_messages (is hermes initialized? run 'hermes gateway install' first)"
@@ -78,6 +86,36 @@ if command -v hermes >/dev/null 2>&1; then
 	hermes skills opt-out --remove --yes ||
 		echo "warning: could not opt hermes out of bundled skills"
 	echo "note: if the hermes gateway is already running, 'hermes gateway restart' picks up the reduced skill set."
+
+	# Registers the 3 digest cron jobs from hermes/cron-jobs.md (T2.5, #45).
+	# Grep-guarded on job name so re-running never creates duplicates; picked
+	# up live by the gateway's cron ticker on its next tick, no restart needed.
+	if [ -f "$ROOT/secrets/.env" ] && grep -q '^TELEGRAM_CHAT_ID=' "$ROOT/secrets/.env"; then
+		CHAT_ID="$(grep '^TELEGRAM_CHAT_ID=' "$ROOT/secrets/.env" | cut -d= -f2-)"
+		echo "==> registering digest cron jobs (07:00 / 13:00 / 20:00, host-local time)"
+
+		register_digest() {
+			name="$1" schedule="$2" prompt="$3"
+			hermes cron list 2>/dev/null | grep -q "$name" && return 0
+			hermes cron create "$schedule" "$prompt" \
+				--name "$name" \
+				--deliver "telegram:$CHAT_ID" \
+				--skill email-assistant \
+				--workdir "$ROOT" ||
+				echo "warning: could not register cron job $name"
+		}
+
+		register_digest "email-digest-morning" "0 7 * * *" \
+			"Compose and send Jenit's MORNING email digest now, following the Digest structure section of your email-assistant skill (morning window: overnight since 20:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
+		register_digest "email-digest-midday" "0 13 * * *" \
+			"Compose and send Jenit's MIDDAY email digest now, following the Digest structure section of your email-assistant skill (midday window: since 07:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
+		register_digest "email-digest-evening" "0 20 * * *" \
+			"Compose and send Jenit's EVENING email digest now, following the Digest structure section of your email-assistant skill (evening window: since 13:00; end with the running monthly spend line per the skill). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
+
+		echo "note: cron times are host-local (see hermes/cron-jobs.md); pin with 'hermes config set timezone <zone>' if this system's timezone ever changes."
+	else
+		echo "note: secrets/.env or TELEGRAM_CHAT_ID missing — skipping digest cron registration (see README)."
+	fi
 else
 	echo "note: hermes CLI not found on PATH — skipping hermes skill link + display config (install hermes first, then re-run)."
 fi

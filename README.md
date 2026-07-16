@@ -6,7 +6,7 @@ Personal Gmail triage worker + a [hermes-agent](https://github.com/nousresearch/
 
 **Phase 1 (triage worker) — live.** Polls Gmail every 5 min, classifies into the fixed taxonomy, applies labels for real (`dry_run = false`, go-live decided on #17).
 
-**Phase 2 (hermes chat layer) — partial.** Built and verified: the Telegram gateway bound and locked to one chat id (T2.1), real-time P1/budget/failure/OAuth pings sent directly by the worker (T2.2, T2.3), and the hermes skill teaching the agent the CLI, taxonomy, guardrails, and conversation playbook (T2.4). **Not yet built:** the three scheduled digests (T2.5), the `assistant correct` verb + improvement loop (T2.6), and the phase close-out (T2.7). Following this README today gets you a working two-way Telegram Q&A agent — not yet automatic digests or in-chat corrections; the skill itself says so when asked.
+**Phase 2 (hermes chat layer) — partial.** Built and verified: the Telegram gateway bound and locked to one chat id (T2.1), real-time P1/budget/failure/OAuth pings sent directly by the worker (T2.2, T2.3), the hermes skill teaching the agent the CLI, taxonomy, guardrails, and conversation playbook (T2.4), and three scheduled digest cron jobs at 07:00/13:00/20:00 (T2.5). **Not yet built:** the `assistant correct` verb + improvement loop (T2.6), and the phase close-out (T2.7). Following this README today gets you a working two-way Telegram Q&A agent with automatic digests — not yet in-chat corrections; the skill itself says so when asked.
 
 ## Prerequisites (one-time human setup)
 
@@ -127,7 +127,15 @@ This is a global change to your hermes profile, not scoped to this repo — it r
 hermes gateway restart
 ```
 
-**3. Verify.** From your Telegram account, message the bot:
+**3. Register the three digests.** Also part of `./deploy/setup.sh`: three hermes cron jobs (07:00 / 13:00 / 20:00, host-local time) that each tell the agent to compose and send a digest per the skill's [Digest structure](hermes/email-assistant/SKILL.md) section — cumulative standing state, a staleness warning if the checkpoint is stale, and (evening) the running monthly spend. Definitions live in [hermes/cron-jobs.md](hermes/cron-jobs.md); registration is idempotent (name-guarded) and picked up live by the gateway's cron ticker, no restart needed. Inspect or change them:
+
+```sh
+hermes cron list                      # see all three, next-run times
+hermes cron run email-digest-morning  # fire one now, off-schedule
+hermes cron remove <job-id>           # delete, then rerun setup.sh to recreate
+```
+
+**4. Verify.** From your Telegram account, message the bot:
 - `ping` → confirms the round-trip (vanilla hermes reply)
 - `what's urgent?` → should answer from `assistant open`, not narrate a command
 - `delete all my newsletters` → should refuse, citing the guardrail, with a manual Gmail path
@@ -152,11 +160,13 @@ src/assistant/          # the triage worker + `assistant` CLI (Phase 1)
   telegram.py                worker's own pings: P1, budget, failure, OAuth-death, recovery
   store.py                   SQLite schema + migrations, shared helpers
   cli.py                     the `assistant` subcommands
-hermes/email-assistant/  # the hermes skill (Phase 2) — versioned here, symlinked live
-  SKILL.md                  CLI reference, taxonomy, guardrails, schema notes,
-                             digest structure (#37), conversation playbook (#39)
+hermes/
+  email-assistant/          # the hermes skill (Phase 2) — versioned here, symlinked live
+    SKILL.md                  CLI reference, taxonomy, guardrails, schema notes,
+                               digest structure (#37), conversation playbook (#39)
+  cron-jobs.md               # the 3 digest cron job definitions (T2.5, #45)
 deploy/
-  setup.sh                  idempotent: venv, systemd timer, + hermes wiring if present
+  setup.sh                  idempotent: venv, systemd timer, + hermes wiring + digest cron if present
   go-live.md                 Phase-1 dry-run → live runbook
   hermes-gateway.md          Telegram gateway bind + lockdown runbook
 docs/

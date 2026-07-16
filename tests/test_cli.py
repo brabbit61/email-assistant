@@ -697,7 +697,17 @@ def test_import_hermes_prices_finished_sessions_and_skips_the_rest(
         tmp_path,
         [
             # priced, finished, anthropic -> imported
-            ("s1", "telegram", "claude-sonnet-5", 1000, 500, 2000, 100, "anthropic", 100.0),
+            (
+                "s1",
+                "telegram",
+                "claude-sonnet-5",
+                1000,
+                500,
+                2000,
+                100,
+                "anthropic",
+                100.0,
+            ),
             # unpriced model -> skipped
             ("s2", "tui", "some-future-model", 10, 10, 0, 0, "anthropic", 200.0),
             # still open -> skipped

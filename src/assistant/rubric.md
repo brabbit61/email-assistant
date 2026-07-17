@@ -45,7 +45,11 @@ tie-break rules decide. Never invent a label.
   didn't start), a real human awaiting a same-/next-day reply, or an appointment
   in the next ~24-48h needing confirmation.
   *Not* P1: marketing urgency, newsletter subject-line urgency, routine receipts,
-  no-reply promotions.
+  no-reply promotions. **Never P1: any email from Monarch** (budgeting app) —
+  its MFA-required / reconnect-account / account-access-blocked prompts are
+  routine aggregator maintenance, not fraud or a real security incident.
+  Always **P2-This-Week** at most, regardless of subject-line wording
+  ("Action Needed", "Multi-Factor Authentication Required", etc.).
 - **P2-This-Week** — matters and has some time horizon, but no same-day cost to
   waiting.
 - **P3-FYI** — informational, no action needed. Most Newsletters and Low-Value

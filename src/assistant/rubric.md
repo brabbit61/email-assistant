@@ -41,15 +41,17 @@ tie-break rules decide. Never invent a label.
 
 - **P1-Urgent** — buzz-my-phone-now. Money moving against you (fraud, failed
   charge, a bill due today), travel disruption (cancelled/changed/closing
-  check-in), an account-security alert (new-device login, password reset you
-  didn't start), a real human awaiting a same-/next-day reply, or an appointment
-  in the next ~24-48h needing confirmation.
-  *Not* P1: marketing urgency, newsletter subject-line urgency, routine receipts,
-  no-reply promotions. **Never P1: any email from Monarch** (budgeting app) —
-  its MFA-required / reconnect-account / account-access-blocked prompts are
-  routine aggregator maintenance, not fraud or a real security incident.
-  Always **P2-This-Week** at most, regardless of subject-line wording
-  ("Action Needed", "Multi-Factor Authentication Required", etc.).
+  check-in), an *unexpected* account-security event (new-device login you
+  didn't initiate, a password reset you didn't request), a real human awaiting
+  a same-/next-day reply, or an appointment in the next ~24-48h needing
+  confirmation.
+  *Not* P1: marketing urgency, newsletter subject-line urgency, routine
+  receipts, no-reply promotions, and — even though the subject line says
+  "Action Needed" or similar — routine account-maintenance prompts from a
+  service you actively use (a scheduled MFA re-verification, "confirm your
+  account" / "update your login" housekeeping) where nothing suspicious is
+  reported. Those default to **P2-This-Week** unless the email itself
+  describes an actual lockout, breach, or suspicious access.
 - **P2-This-Week** — matters and has some time horizon, but no same-day cost to
   waiting.
 - **P3-FYI** — informational, no action needed. Most Newsletters and Low-Value

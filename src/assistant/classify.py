@@ -90,7 +90,15 @@ def classify(
         resp = client.messages.create(
             model=model,
             max_tokens=256,
-            system=_RUBRIC_PATH.read_text(),
+            # ponytail: no-op below Haiku's 4096-token cache floor (rubric is ~800);
+            # free until then, auto-caches once the improvement loop grows the rubric.
+            system=[
+                {
+                    "type": "text",
+                    "text": _RUBRIC_PATH.read_text(),
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
         )

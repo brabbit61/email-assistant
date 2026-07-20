@@ -5,9 +5,11 @@
 The seam between the deterministic worker and everything else: hermes runs these
 subcommands verbatim (no MCP server, no RPC), cron/systemd read the exit code,
 Jenit reads the stdout. `run` composes poll -> classify -> apply into one pass;
-`status`/`audit`/`costs` are read-only reports over the same SQLite log so
-nobody has to open the DB by hand. Plain tabular text only — no machine-readable
-flag yet (added if Phase 2 hermes work shows a real need, per the ticket).
+`status`/`audit`/`review` are read-only reports over the same SQLite log so
+nobody has to open the DB by hand; `costs` additionally folds in hermes's own
+spend (an idempotent import) before totaling, so it never undercounts. Plain
+tabular text only — no machine-readable flag yet (added if Phase 2 hermes work
+shows a real need, per the ticket).
 """
 
 from __future__ import annotations
@@ -317,6 +319,14 @@ def cmd_review(args: argparse.Namespace) -> int:
 def cmd_costs(args: argparse.Namespace) -> int:
     cfg = config.load()
     conn = store.open_db(cfg.db_path)
+
+    try:
+        _import_hermes_sessions(
+            conn, Path(getattr(args, "hermes_db", None) or _HERMES_DB_PATH)
+        )
+    except Exception:  # noqa: BLE001 — report worker spend regardless
+        pass
+
     month = args.month or datetime.now(timezone.utc).strftime("%Y-%m")
     like = f"{month}%"
 
@@ -394,14 +404,15 @@ def _hermes_session_cost(row: sqlite3.Row) -> float | None:
     ) / 1_000_000
 
 
-def cmd_import_hermes(args: argparse.Namespace) -> int:
-    cfg = config.load()
-    conn = store.open_db(cfg.db_path)
-
-    hermes_db_path = Path(args.hermes_db)
+def _import_hermes_sessions(
+    conn: sqlite3.Connection, hermes_db_path: Path
+) -> tuple[int, float, set[str]]:
+    """Insert one llm_calls row per finished, unseen hermes session; return
+    (imported, imported_cost, skipped_models). No-op zeros if the log is absent.
+    Idempotent — INSERT OR IGNORE keyed on hermes_session_id — so `costs` can call
+    it on every invocation without double-counting."""
     if not hermes_db_path.exists():
-        print(f"No hermes session log at {hermes_db_path}")
-        return 0
+        return 0, 0.0, set()
 
     hermes = sqlite3.connect(f"file:{hermes_db_path}?mode=ro", uri=True)
     hermes.row_factory = sqlite3.Row
@@ -439,7 +450,19 @@ def cmd_import_hermes(args: argparse.Namespace) -> int:
             imported += 1
             imported_cost += cost
     conn.commit()
+    return imported, imported_cost, skipped_models
 
+
+def cmd_import_hermes(args: argparse.Namespace) -> int:
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    hermes_db_path = Path(args.hermes_db)
+    if not hermes_db_path.exists():
+        print(f"No hermes session log at {hermes_db_path}")
+        return 0
+    imported, imported_cost, skipped_models = _import_hermes_sessions(
+        conn, hermes_db_path
+    )
     print(f"Imported {imported} hermes session(s), ${imported_cost:.4f}")
     if skipped_models:
         print(f"Skipped (no local price): {', '.join(sorted(skipped_models))}")

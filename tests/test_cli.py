@@ -7,6 +7,7 @@ test_apply.py) so the run loop's wiring is exercised end-to-end.
 
 import argparse
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 
@@ -660,7 +661,10 @@ def test_costs_aggregates_by_purpose_and_model(tmp_path, monkeypatch, capsys):
     )
     conn.commit()
 
-    code = cli.cmd_costs(argparse.Namespace(month=month))
+    # Isolate from any real ~/.hermes/state.db so the total stays deterministic.
+    code = cli.cmd_costs(
+        argparse.Namespace(month=month, hermes_db=str(tmp_path / "no_hermes.db"))
+    )
 
     assert code == 0
     out = capsys.readouterr().out
@@ -740,6 +744,53 @@ def test_import_hermes_prices_finished_sessions_and_skips_the_rest(
     cli.cmd_import_hermes(argparse.Namespace(hermes_db=str(hermes_db)))
     count = conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0]
     assert count == 1
+
+
+def test_costs_folds_in_hermes_spend(tmp_path, monkeypatch, capsys):
+    # `costs` must include hermes's own chat/digest spend, not just the worker's —
+    # it silently imports finished hermes sessions before totaling (else it
+    # undercounts by exactly hermes's spend).
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    conn = store.open_db(root / "data" / "triage.db")
+    month = "2026-07"
+    conn.execute(
+        "INSERT INTO llm_calls(actor, purpose, model, input_tokens, output_tokens, "
+        "cost_usd, created_at) VALUES ('worker','classify','claude-haiku-4-5-20251001',"
+        "1000,500,0.0035,?)",
+        (f"{month}-05T10:00:00Z",),
+    )
+    conn.commit()
+    ended = datetime(2026, 7, 15, tzinfo=timezone.utc).timestamp()
+    hermes_db = _make_hermes_db(
+        tmp_path,
+        [
+            (
+                "s1",
+                "telegram",
+                "claude-sonnet-5",
+                1000,
+                500,
+                2000,
+                100,
+                "anthropic",
+                ended,
+            )
+        ],
+    )
+
+    code = cli.cmd_costs(argparse.Namespace(month=month, hermes_db=str(hermes_db)))
+
+    assert code == 0
+    out = capsys.readouterr().out
+    # hermes's session was imported and shows up in the breakdown alongside the worker.
+    assert "hermes" in out and "claude-sonnet-5" in out
+    assert (
+        conn.execute("SELECT COUNT(*) FROM llm_calls WHERE actor='hermes'").fetchone()[
+            0
+        ]
+        == 1
+    )
 
 
 # --- open: Gmail-verified still-open (T2.4, #44) ------------------------------

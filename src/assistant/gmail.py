@@ -97,6 +97,20 @@ def list_messages_since(svc: Resource, epoch_s: int) -> list[str]:
             return ids
 
 
+def list_message_ids(svc: Resource, q: str) -> list[str]:
+    """Message ids matching an arbitrary Gmail search query, e.g. the backfill
+    scope query. Same pagination shape as `list_messages_since`."""
+    api = svc.users().messages()
+    ids: list[str] = []
+    page_token = None
+    while True:
+        resp = api.list(userId="me", q=q, pageToken=page_token).execute()
+        ids.extend(m["id"] for m in resp.get("messages", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            return ids
+
+
 def message_labels(svc: Resource, msg_id: str) -> list[str]:
     """A message's current Gmail label ids, via a cheap `format='minimal'` get.
     The authoritative present state for a correction (issue #46), independent of the

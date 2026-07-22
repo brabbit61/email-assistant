@@ -1061,3 +1061,20 @@ def test_status_unclassified_count_excludes_human_rows(tmp_path, monkeypatch, ca
 
     out = capsys.readouterr().out
     assert "Unclassified: 1 message(s) awaiting retry" in out  # only the worker row
+
+
+def test_backfill_estimate_wires_config_gmail_and_prints_result(
+    tmp_path, monkeypatch, capsys
+):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "list_message_ids", lambda svc, q: ["m1", "m2"])
+    monkeypatch.setattr(gmail, "service", lambda creds: object())
+
+    code = cli.cmd_backfill(argparse.Namespace(estimate=True, after=None, before=None))
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Backfill estimate — inbox, received mail only" in out
+    assert "Messages:     2 to classify  (0 already classified, skipped)" in out

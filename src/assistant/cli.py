@@ -22,6 +22,7 @@ from pathlib import Path
 
 from assistant import (
     apply,
+    backfill,
     classify,
     config,
     correct,
@@ -555,6 +556,21 @@ def cmd_open(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- backfill (T3.4, issue #68) -----------------------------------------------
+
+
+def cmd_backfill(args: argparse.Namespace) -> int:
+    """`--estimate`: zero-spend, read-only projection of a `--run` backfill.
+    Required for now — `--run --confirm` (T3.5) is a separate, later ticket."""
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    creds = gmail.get_credentials(cfg)
+    svc = gmail.service(creds)
+    result = backfill.estimate(conn, svc, cfg.classifier_model, args.after, args.before)
+    print(backfill.format_estimate(result))
+    return 0
+
+
 # --- correct (improvement loop, Flow B) --------------------------------------
 
 
@@ -631,6 +647,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--hermes-db", default=str(_HERMES_DB_PATH), help="path to hermes's state.db"
     )
     p_import_hermes.set_defaults(func=cmd_import_hermes)
+
+    p_backfill = sub.add_parser(
+        "backfill", help="full-history classification via the Batch API"
+    )
+    p_backfill.add_argument(
+        "--estimate",
+        action="store_true",
+        required=True,
+        help="zero-spend count + cost projection (required — --run lands in T3.5)",
+    )
+    p_backfill.add_argument("--after", default=None, help="YYYY-MM-DD, inclusive")
+    p_backfill.add_argument("--before", default=None, help="YYYY-MM-DD, exclusive")
+    p_backfill.set_defaults(func=cmd_backfill)
 
     p_correct = sub.add_parser(
         "correct", help="apply a human correction: fix the Gmail label, record it"

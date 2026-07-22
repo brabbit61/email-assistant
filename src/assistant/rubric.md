@@ -15,14 +15,23 @@ tie-break rules decide. Never invent a label.
 - **Events** — invitations, RSVPs, calendar/meeting mail, event tickets.
 - **Travel** — flights, trains, hotels, itineraries, check-in, airplace tickets.
 - **Work** — human professional correspondence: colleagues, clients, your
-  employer, job alerts
+  employer, job alerts, and **any mail about a job application you submitted**
+  (confirmation, status update, rejection, interview scheduling/prep) —
+  regardless of whether the sender is a human recruiter or an automated ATS.
 - **Dev** — automated technical mail: GitHub, CI/CD, package/API/service-status
   alerts, error monitoring, deploys
 - **Personal** — real humans who know you (friends, family), not work.
 - **Newsletters** — subscribed bulk content you chose to receive, 
   tech news subscription updates
 - **Low-Value** — unsolicited / no-reply / marketing / spam, including
-  **recruiter cold-emails** (even when a real person sent them).
+  **recruiter cold-emails** (even when a real person sent them). **Excludes**
+  job-application submission confirmations, status updates, rejections, and
+  interview-process mail for roles *you applied to* — those are **Work**
+  (see below), never Low-Value, even when sent by an automated ATS
+  (Workday, Greenhouse, Ashby/AshbyHQ, iCIMS, Lever) or via LinkedIn/Indeed
+  Apply. The distinguishing question: did you initiate the application?
+  If yes → Work, not Low-Value, no matter how automated/bulk the sender's
+  system is.
 
 ## Tie-breaks
 

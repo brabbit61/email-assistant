@@ -78,8 +78,9 @@ deploy/
 - Exit criteria: digests arrive on schedule for a week; urgent test email pings within ~5 min.
 
 **Phase 3 — Actions + backfill**
-- Enable auto-archive of Low-Value; `create-draft` for Action-Needed replies requested via chat.
-- Backfill: count mailbox (`users.getProfile` messagesTotal), print cost estimate, confirm, then run checkpointed Batch API job overnight. Labels only — never archives historical mail.
+- Enable auto-archive of Low-Value (gated by an active spot-check of existing verdicts, not passive silence) + a one-time manual Gmail sweep of the pre-existing Low-Value backlog.
+- Draft-reply: agent composes and places a Gmail draft immediately on request (reply-to-sender, proper In-Reply-To/References threading, Gmail-style quote-back) — no chat preview step; agent never sends.
+- Backfill: `--estimate` counts mailbox (received mail only, not sent) and prints cost with zero spend; `--run --confirm` is a manual, resumable, looping command (submit batch → poll → ingest → checkpoint → next page, one Gmail-list-page per Batch API submission) that keeps going until the whole mailbox is done or it's killed — rerun the identical command to resume. Category labels only, no priority labels, `source='backfill'` excluded from the live actionable set — never archives historical mail, spend is tracked separately from the daily soft-cap. `--after`/`--before` date flags support a 1-week trial window first. Raising the Anthropic console's hard monthly spend cap before running is a sign-off item, not automated.
 
 **Phase 4 — Stretch features (each is a small addition on the SQLite log)**
 - Follow-up tracker: threads awaiting replies (either direction) surfaced in digests.
@@ -159,6 +160,22 @@ Dependency shape: Phase 0 is fully parallel; Phase 1 forks after T0.6 into schem
 
 Dependency shape: S2.1–S2.4 and T2.1 start in parallel → ping chain (T2.2→T2.3) and skill chain (T2.4→T2.5, T2.6) → converge at T2.7.
 
+**Status (2026-07-22):** Phase 3 batch drafted from epic #19 ahead of #47 (Phase 2 trial week) closing — spec ticket unblocked now so sign-off can happen during the trial; every implementation ticket is `Blocked by` #47. Decisions locked during grilling, recorded in ticket bodies: archive go-live is an active spot-check of the existing Low-Value verdicts (not passive silence), followed by a one-time manual Gmail sweep of the backlog — the flag flip is code, the sweep is Jenit clicking archive in Gmail; corrections to Low-Value (chat or Gmail relabel) never auto-archive, only fresh triage does. Draft-reply places the draft immediately (no chat preview round-trip), reply-to-sender with proper threading + Gmail-style quote-back. Backfill: `--estimate`/`--run --confirm` two-step, received mail only, one Gmail-list-page per Batch API submission is the checkpoint unit, category labels only (no priority) tagged `source='backfill'` and excluded from the live actionable set, spend fully separate from the daily soft-cap, `--run` is a manual (not timer-driven) command that loops internally until done or killed and resumes on identical re-invocation, raising the Anthropic console's hard monthly cap is a sign-off checklist item rather than code. The report HTML artifact was dropped from scope entirely (see Auditability section below).
+
+### Phase 3 tickets (milestone: Phase 3, created 2026-07-22)
+
+| # | Title | Depends on | Sign-offs required |
+|---|---|---|---|
+| S3.1 | Spec: archive go-live criteria, draft-reply mockup + guardrail wording, backfill CLI contract & cost-estimate format | — | archive go-live gate; draft-reply chat mockup; backfill `--estimate`/`--run` output format |
+| T3.1 | Flip `auto_archive_low_value` + Low-Value backlog sweep | S3.1 | spot-check result; backlog swept |
+| T3.2 | `create-draft` verb: compose + place Gmail draft, reply-to-sender threading | S3.1 | — |
+| T3.3 | Hermes skill file: intent 10 (draft a reply), flip guardrail wording | S3.1, T3.2 | — |
+| T3.4 | Backfill: mailbox count + cost estimate (`--estimate`) | S3.1 | cost estimate format |
+| T3.5 | Backfill: checkpointed Batch API run (`--run --confirm`), category-only labels, source isolation | T3.4 | console spend cap raised; 1-week trial window verified |
+| T3.6 | Phase 3 close-out: archive live, draft-reply verified, full backfill run | all above | full backfill go-ahead → close epic #19 |
+
+Dependency shape: S3.1 unblocked now; every T3.x `Blocked by` #47 in addition to its S3.1/chain dependency. Archive (T3.1) and draft-reply (T3.2→T3.3) run independent of the backfill chain (T3.4→T3.5); all converge at T3.6.
+
 ## Auditability, transparency & cost awareness (cross-cutting requirement)
 
 SQLite is the single source of truth; every artifact below is generated from it.
@@ -166,11 +183,10 @@ SQLite is the single source of truth; every artifact below is generated from it.
 - **Action audit log**: every mutation the system makes — label applied/removed, archive, draft created, Telegram message sent — is a row with timestamp, gmail message id, actor (`worker`/`agent`/`backfill`), and the classifier's reasoning snippet. Nothing touches Gmail without a corresponding row (written before the API call, marked confirmed after).
 - **Cost ledger**: every LLM call records model, input/output tokens, and computed USD cost (the Anthropic API returns usage on every response). Applies to worker, backfill, and hermes-driven calls alike.
 - **CLI artifacts**: `assistant audit [--since]` (what was done and why), `assistant costs [--month]` (spend by model/component), `assistant status` (checkpoint, last run, error count).
-- **HTML report**: `assistant report` renders a single self-contained HTML file from SQLite — triage volume by category, accuracy spot-check queue, cost over time. No server, just open the file. Regenerated weekly by a hermes cron job.
 - **Cost in your face**: each evening digest ends with a one-line running monthly spend; a configurable daily budget cap triggers an immediate Telegram ping and pauses non-urgent classification if exceeded.
 - **Dry-run everywhere**: `--dry-run` on `run` and `backfill` prints intended actions + estimated cost without touching Gmail or spending on labels.
 
-Phase mapping: token/cost recording + action log + `audit`/`costs`/`status` land in **Phase 1** (foundation, not retrofit); cost line in digest + budget-cap ping in **Phase 2**; `report` HTML + weekly cron in **Phase 3**.
+Phase mapping: token/cost recording + action log + `audit`/`costs`/`status` land in **Phase 1** (foundation, not retrofit); cost line in digest + budget-cap ping in **Phase 2**. (The `report` HTML artifact originally planned for Phase 3 was dropped 2026-07-22 — not wanted at this stage; `status`/`audit`/`costs`/`review` already cover the same ground.)
 
 ## Costs (estimate, shown to user before backfill)
 

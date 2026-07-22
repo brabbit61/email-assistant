@@ -1072,9 +1072,7 @@ def test_backfill_estimate_wires_config_gmail_and_prints_result(
     monkeypatch.setattr(gmail, "list_message_ids", lambda svc, q: ["m1", "m2"])
     monkeypatch.setattr(gmail, "service", lambda creds: object())
 
-    code = cli.cmd_backfill(
-        argparse.Namespace(estimate=True, after=None, before=None)
-    )
+    code = cli.cmd_backfill(argparse.Namespace(estimate=True, after=None, before=None))
 
     out = capsys.readouterr().out
     assert code == 0

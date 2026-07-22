@@ -100,7 +100,9 @@ def test_cost_math_uses_real_average_from_llm_calls(tmp_path, monkeypatch):
     assert result.est_cost_usd == expected
 
 
-def test_falls_back_to_plan_default_when_no_prior_classifications(tmp_path, monkeypatch):
+def test_falls_back_to_plan_default_when_no_prior_classifications(
+    tmp_path, monkeypatch
+):
     conn = store.open_db(tmp_path / "triage.db")
     monkeypatch.setattr(backfill.gmail, "list_message_ids", lambda svc, q: ["m1"])
 
@@ -125,7 +127,9 @@ def test_format_output_matches_locked_spec():
 
     out = backfill.format_estimate(result)
 
-    assert "Messages:     28,766 to classify  (1,234 already classified, skipped)" in out
+    assert (
+        "Messages:     28,766 to classify  (1,234 already classified, skipped)" in out
+    )
     assert "Scope:        full history (no date bound)" in out
     assert "claude-haiku-4-5-20251001, Batch API 50% discount" in out
     assert "Zero spent — estimate only." in out

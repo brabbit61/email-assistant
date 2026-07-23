@@ -179,6 +179,7 @@ class RunResult:
     polled_batch: str | None = None
     processing: bool = False  # polled a batch that hasn't ended yet
     progress: tuple[int, int] = (0, 0)  # (done, total) for a still-processing batch
+    submitted_age: str | None = None  # "Nm ago" since this batch was submitted
     # ingest tally for a batch that ended this run: succeeded, errored, skipped, labeled
     counts: tuple[int, int, int, int] = (0, 0, 0, 0)
     submitted_batch: str | None = None
@@ -186,17 +187,20 @@ class RunResult:
     complete: bool = False  # nothing left to classify in scope
 
 
-def _open_batch(conn: sqlite3.Connection) -> tuple[str, str] | None:
-    """The one submitted-but-not-yet-ingested backfill batch: (run_id, batch_id),
-    or None. A batch is open until a `page_done` event names the same batch_id."""
+def _open_batch(conn: sqlite3.Connection) -> tuple[str, str, str] | None:
+    """The one submitted-but-not-yet-ingested backfill batch: (run_id, batch_id,
+    submitted_at), or None. A batch is open until a `page_done` event names the
+    same batch_id. submitted_at feeds the "still processing" elapsed-time display
+    — the one thing guaranteed to change between polls even when the Batch API's
+    request_counts doesn't move until the whole batch ends (#69 follow-up)."""
     row = conn.execute(
-        "SELECT run_id, batch_id FROM run_events "
+        "SELECT run_id, batch_id, recorded_at FROM run_events "
         "WHERE phase = 'backfill' AND status = 'submitted' AND batch_id NOT IN ("
         "  SELECT batch_id FROM run_events "
         "  WHERE phase = 'backfill' AND status = 'page_done' AND batch_id IS NOT NULL) "
         "ORDER BY event_id DESC LIMIT 1"
     ).fetchone()
-    return (row[0], row[1]) if row else None
+    return (row[0], row[1], row[2]) if row else None
 
 
 def _next_page(
@@ -369,7 +373,7 @@ def run(
 
     open_batch = _open_batch(conn)
     if open_batch:
-        run_id, batch_id = open_batch
+        run_id, batch_id, submitted_at = open_batch
         result.polled_batch = batch_id
         batch = client.messages.batches.retrieve(batch_id)
         if batch.processing_status != "ended":
@@ -377,6 +381,7 @@ def run(
             done = rc.succeeded + rc.errored + rc.expired + rc.canceled
             result.processing = True
             result.progress = (done, done + rc.processing)
+            result.submitted_age = store.age(submitted_at)
             return result  # single batch in flight — don't submit a second
         result.counts = _ingest_batch(conn, svc, client, run_id, batch_id, model)
 
@@ -391,12 +396,17 @@ def run(
 
 
 def format_run(r: RunResult) -> str:
+    # Elapsed time leads, not the done/total fraction: the Batch API's
+    # request_counts often doesn't move at all until the whole batch ends, so a
+    # bare "0/1,000" on every poll is noise (the same line, no new information).
+    # "Nm ago" always changes — it's the one signal a repeated poll can trust.
     lines = [f"Backfill run — {r.scope_label}"]
     if r.processing:
         done, total = r.progress
+        progress = f"{done:,}/{total:,} done, " if done else ""
         lines.append(
-            f"  Batch {r.polled_batch}: {done:,}/{total:,} done, still processing "
-            "— re-run to poll."
+            f"  Batch {r.polled_batch}: {progress}still processing "
+            f"(submitted {r.submitted_age}) — re-run to poll."
         )
         return "\n".join(lines)
     if r.polled_batch:  # an ended batch we ingested this run

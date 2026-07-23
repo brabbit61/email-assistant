@@ -289,8 +289,38 @@ def test_run_reports_still_processing_and_submits_nothing(tmp_path):
 
     assert r.processing is True
     assert r.progress == (1, 2)
+    assert r.submitted_age == "just now"  # elapsed since the seeded submit
     assert r.submitted_batch is None  # only one batch in flight at a time
     assert batches.created == []
+
+
+def test_still_processing_display_leads_with_elapsed_not_zero_progress():
+    # Regression: request_counts often doesn't move at all until the batch ends,
+    # so a static "0/1,000" printed on every poll is noise. Elapsed time is the
+    # one thing guaranteed to change between polls.
+    out = backfill.format_run(
+        backfill.RunResult(
+            "full history (no date bound)",
+            polled_batch="b1",
+            processing=True,
+            progress=(0, 1000),
+            submitted_age="47m ago",
+        )
+    )
+    assert "0/1,000" not in out
+    assert "still processing (submitted 47m ago)" in out
+
+    # once something has actually finished, the fraction is worth showing
+    out = backfill.format_run(
+        backfill.RunResult(
+            "full history (no date bound)",
+            polled_batch="b1",
+            processing=True,
+            progress=(412, 1000),
+            submitted_age="1h ago",
+        )
+    )
+    assert "412/1,000 done, still processing (submitted 1h ago)" in out
 
 
 def test_run_ingests_ended_batch_records_labels_and_isolates(tmp_path, monkeypatch):

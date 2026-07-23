@@ -276,8 +276,11 @@ def notify_budget(
     daily soft cap (#38). UTC not local (#43) — matches the cost ledger and what
     `assistant costs` shows. Ping-only; nothing pauses."""
     today = store.now_iso()[:10]
+    # Backfill (T3.5) is deliberate one-time spend, never checked against the daily
+    # soft cap — exclude actor='backfill' so a backfill day can't false-trip this.
     spend = conn.execute(
-        "SELECT COALESCE(SUM(cost_usd), 0) FROM llm_calls WHERE created_at LIKE ?",
+        "SELECT COALESCE(SUM(cost_usd), 0) FROM llm_calls "
+        "WHERE created_at LIKE ? AND actor != 'backfill'",
         (f"{today}%",),
     ).fetchone()[0]
     if spend <= soft_cap:

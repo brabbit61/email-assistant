@@ -418,6 +418,34 @@ def test_budget_noop_under_cap(tmp_path, monkeypatch):
     assert calls == []
 
 
+def test_budget_excludes_backfill_spend(tmp_path, monkeypatch):
+    # T3.5 backfill is deliberate one-time spend, never checked against the daily
+    # soft cap: a $25 backfill day must not trip the ping when worker spend is tiny.
+    conn = _op_conn(tmp_path)
+    day = "2026-07-14"
+    monkeypatch.setattr(store, "now_iso", _Clock(f"{day}T12:00:00Z"))
+    _seed_cost(conn, f"{day}T09:00:00Z", 0.10)  # worker: well under cap
+    conn.execute(
+        "INSERT INTO llm_calls"
+        "(actor, purpose, model, input_tokens, output_tokens, cost_usd, created_at) "
+        "VALUES ('backfill', 'classify', 'm', 1, 1, 25.0, ?)",
+        (f"{day}T10:00:00Z",),
+    )
+    conn.commit()
+    calls = []
+
+    telegram.notify_budget(
+        conn,
+        "r",
+        "tok",
+        "c",
+        soft_cap=0.75,
+        monthly_cap=15.0,
+        send_fn=_fake_send(calls),
+    )
+    assert calls == []  # $0.10 worker spend only — backfill's $25 doesn't count
+
+
 def test_oauth_fires_and_stays_silent_until_reauth(tmp_path, monkeypatch):
     conn = _op_conn(tmp_path)
     clock = _Clock("2026-07-14T09:00:00Z")

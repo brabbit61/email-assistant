@@ -1,13 +1,26 @@
-"""Backfill cost estimate (T3.4, issue #68). Zero-spend, read-only: counts what
-a `--run` would classify and projects a dollar cost before any spend happens —
-the up-front gate PLAN.md's Costs section requires.
+"""Backfill: cost estimate (T3.4, issue #68) + the checkpointed Batch API run
+(T3.5, issue #69).
+
+`estimate()` is zero-spend, read-only: it counts what a `--run` would classify
+and projects a dollar cost before any spend happens — the up-front gate PLAN.md's
+Costs section requires.
+
+`run()` is the actual spend. It's single-step and resumable: each invocation
+either polls the one in-flight Batch API request (ingesting its results, labeling
+Gmail, then submitting the next page) or, if none is open, submits the next page —
+until nothing is left. There is no long-lived process, so a sleeping laptop or a
+closed terminal loses nothing; re-running the identical command resumes from the
+`classifications` table itself (a message is "done" iff it has a classification
+row) and re-polls an in-flight batch by its saved id rather than resubmitting it.
 
 Scope is inbox-only received mail (`in:inbox -in:sent -in:chats`), matching the
-worker's own pre-existing backlog rather than all-mail history. The token/cost
-projection uses the real average from past `classify` calls in `llm_calls`
-(self-calibrating to this mailbox and the current rubric) so the estimate isn't
-a guess; a PLAN.md constant is the fallback only before any classification has
-ever run. Output format locked in S3.1 (#64).
+worker's own pre-existing backlog rather than all-mail history — shared by both
+`estimate()` and `run()` via `_build_query`. Backfilled rows are tagged
+`source='backfill'` so they never reach the actionable set (digests/pings/`open`).
+The token/cost projection uses the real average from past `classify` calls in
+`llm_calls` (self-calibrating to this mailbox and the current rubric) so the
+estimate isn't a guess; a PLAN.md constant is the fallback only before any
+classification has ever run. Estimate output format locked in S3.1 (#64).
 """
 
 from __future__ import annotations
@@ -15,8 +28,17 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from assistant import gmail
-from assistant.classify import cost_usd
+from assistant import apply, gmail, store
+from assistant.classify import (
+    UNCLASSIFIED,
+    Email,
+    Usage,
+    Verdict,
+    cost_usd,
+    record,
+    request_params,
+    verdict_from_message,
+)
 
 # ponytail: PLAN.md's rough per-email average, used only until llm_calls has
 # real classify rows to average — bump if the rubric/typical email size shifts.
@@ -132,7 +154,262 @@ def format_estimate(r: EstimateResult) -> str:
         f"{'Est. cost:':<14}~${r.est_cost_usd:.2f}   "
         f"({r.model}, Batch API 50% discount)",
         "",
-        "Zero spent — estimate only. "
-        "Run `assistant backfill --run --confirm` to execute.",
+        "Zero spent — estimate only. Run `assistant backfill --run` to execute.",
     ]
+    return "\n".join(lines)
+
+
+# --- run (T3.5, issue #69): checkpointed Batch API backfill -------------------
+#
+# One invocation makes exactly one state transition, so it always terminates
+# quickly (no in-process blocking across the Batch API's minutes-to-hours
+# turnaround): poll the single in-flight batch if there is one — and if it has
+# ended, ingest + label + submit the next page — otherwise submit the next page,
+# else report completion. Resume is re-derived from `classifications` each run.
+
+# messages per Batch API request. ponytail: a page's bodies stay far under the
+# API's 256 MB / 100k-request caps (1000 x ~10 KB ~= 10 MB); a module constant,
+# not config — promote only if a mailbox ever needs per-run tuning.
+_PAGE_SIZE = 1000
+
+
+@dataclass
+class RunResult:
+    scope_label: str
+    polled_batch: str | None = None
+    processing: bool = False  # polled a batch that hasn't ended yet
+    progress: tuple[int, int] = (0, 0)  # (done, total) for a still-processing batch
+    # ingest tally for a batch that ended this run: succeeded, errored, skipped, labeled
+    counts: tuple[int, int, int, int] = (0, 0, 0, 0)
+    submitted_batch: str | None = None
+    submitted_count: int = 0
+    complete: bool = False  # nothing left to classify in scope
+
+
+def _open_batch(conn: sqlite3.Connection) -> tuple[str, str] | None:
+    """The one submitted-but-not-yet-ingested backfill batch: (run_id, batch_id),
+    or None. A batch is open until a `page_done` event names the same batch_id."""
+    row = conn.execute(
+        "SELECT run_id, batch_id FROM run_events "
+        "WHERE phase = 'backfill' AND status = 'submitted' AND batch_id NOT IN ("
+        "  SELECT batch_id FROM run_events "
+        "  WHERE phase = 'backfill' AND status = 'page_done' AND batch_id IS NOT NULL) "
+        "ORDER BY event_id DESC LIMIT 1"
+    ).fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def _next_page(
+    conn: sqlite3.Connection, svc, after: str | None, before: str | None
+) -> list[str]:
+    """The next page of in-scope message ids with no classification row yet."""
+    ids = gmail.list_message_ids(svc, _build_query(after, before))
+    already = _already_classified(conn, ids)
+    return [i for i in ids if i not in already][:_PAGE_SIZE]
+
+
+def _is_classified(conn: sqlite3.Connection, mid: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM classifications WHERE gmail_message_id = ? LIMIT 1", (mid,)
+        ).fetchone()
+        is not None
+    )
+
+
+def _submit_page(
+    conn: sqlite3.Connection, svc, client, model: str, ids: list[str]
+) -> str:
+    """Fetch each message (persist to `messages` for the classifications FK), submit
+    them as one Batch API request, and record a `submitted` checkpoint carrying the
+    batch id. custom_id = gmail_message_id maps results back on ingest.
+
+    origin='backfill' keeps the row out of the live `assistant run` loop even
+    while a result is still pending (e.g. expired/canceled, which deliberately
+    gets no classification row so a later page can retry it) — the live loop
+    excludes non-'poll' origin unconditionally, not just unclassified rows."""
+    run_id = store.new_id()
+    now = store.now_iso()
+    requests = []
+    for mid in ids:
+        msg = gmail.get_message(svc, mid)
+        conn.execute(
+            "INSERT OR IGNORE INTO messages"
+            "(gmail_message_id, thread_id, sender, subject, body, internal_date_ms, "
+            " gmail_label_ids, raw_json, first_seen_at, origin) "
+            "VALUES (?,?,?,?,?,?,?,?,?,'backfill')",
+            (
+                msg["gmail_message_id"],
+                msg["thread_id"],
+                msg["sender"],
+                msg["subject"],
+                msg["body"],
+                msg["internal_date_ms"],
+                msg["gmail_label_ids"],
+                msg["raw_json"],
+                now,
+            ),
+        )
+        requests.append(
+            {
+                "custom_id": mid,
+                "params": request_params(
+                    model,
+                    Email(msg["sender"] or "", msg["subject"] or "", msg["body"] or ""),
+                ),
+            }
+        )
+    conn.commit()
+
+    batch = client.messages.batches.create(requests=requests)
+    conn.execute(
+        "INSERT INTO run_events"
+        "(run_id, phase, status, batch_id, messages_seen, recorded_at) "
+        "VALUES (?, 'backfill', 'submitted', ?, ?, ?)",
+        (run_id, batch.id, len(ids), store.now_iso()),
+    )
+    conn.commit()
+    return batch.id
+
+
+def _batch_error(item) -> str:
+    """Short error type for an `errored` result, best-effort (informational)."""
+    err = getattr(item.result, "error", None)
+    return getattr(getattr(err, "error", None), "type", "unknown")
+
+
+def _ingest_batch(
+    conn: sqlite3.Connection, svc, client, run_id: str, batch_id: str, model: str
+) -> tuple[int, int, int, int]:
+    """Stream an ended batch's results into `classifications` (+ Gmail category
+    labels), committing per message so an interrupted ingest resumes on the
+    remainder. Idempotent: a message already classified (a prior crashed ingest)
+    is skipped. Returns (succeeded, errored, skipped, labeled).
+
+    Failure policy (locked #69): succeeded -> record + label; errored -> record
+    UNCLASSIFIED (terminal, so a poisoned message can't loop the backfill forever);
+    expired/canceled -> skip, leaving it for a later page to retry.
+
+    Priority is stripped before it's ever stored, not just before the Gmail
+    label — backfill is category-only end to end (#69), so a P1/P2 verdict on
+    old mail never lands in `classifications.priority` for anything downstream
+    to notice, even a future query that (unlike today's) forgets to filter
+    source='backfill'."""
+    succeeded = errored = skipped = labeled = 0
+    for item in client.messages.batches.results(batch_id):
+        mid = item.custom_id
+        if _is_classified(conn, mid):
+            continue
+        rtype = item.result.type
+        if rtype == "succeeded":
+            message = item.result.message
+            raw = verdict_from_message(message)
+            verdict = Verdict(raw.category, None, raw.reasoning)
+            usage = Usage(
+                model, message.usage.input_tokens, message.usage.output_tokens
+            )
+            record(
+                conn,
+                mid,
+                verdict,
+                usage,
+                actor="backfill",
+                source="backfill",
+                batch=True,
+            )
+            succeeded += 1
+            if verdict.category != UNCLASSIFIED:
+                try:
+                    apply.apply_verdict(
+                        conn,
+                        svc,
+                        run_id,
+                        mid,
+                        verdict,
+                        actor="backfill",
+                        auto_archive=False,
+                    )
+                    labeled += 1
+                except Exception:  # noqa: BLE001 — one label failure can't abort the page
+                    pass
+        elif rtype == "errored":
+            record(
+                conn,
+                mid,
+                Verdict(UNCLASSIFIED, None, f"batch_error: {_batch_error(item)}"),
+                Usage(model, 0, 0),
+                actor="backfill",
+                source="backfill",
+                batch=True,
+            )
+            errored += 1
+        else:  # expired / canceled — not the message's fault; retry on a later page
+            skipped += 1
+
+    conn.execute(
+        "INSERT INTO run_events"
+        "(run_id, phase, status, batch_id, messages_seen, actions_taken, error_count, "
+        " recorded_at) VALUES (?, 'backfill', 'page_done', ?, ?, ?, ?, ?)",
+        (run_id, batch_id, succeeded, labeled, errored, store.now_iso()),
+    )
+    conn.commit()
+    return succeeded, errored, skipped, labeled
+
+
+def run(
+    conn: sqlite3.Connection,
+    svc,
+    client,
+    model: str,
+    after: str | None,
+    before: str | None,
+) -> RunResult:
+    """One resumable backfill step. See module docstring for the state machine."""
+    result = RunResult(scope_label=_scope_label(after, before))
+
+    open_batch = _open_batch(conn)
+    if open_batch:
+        run_id, batch_id = open_batch
+        result.polled_batch = batch_id
+        batch = client.messages.batches.retrieve(batch_id)
+        if batch.processing_status != "ended":
+            rc = batch.request_counts
+            done = rc.succeeded + rc.errored + rc.expired + rc.canceled
+            result.processing = True
+            result.progress = (done, done + rc.processing)
+            return result  # single batch in flight — don't submit a second
+        result.counts = _ingest_batch(conn, svc, client, run_id, batch_id, model)
+
+    # No open batch (or we just ingested one) — submit the next page.
+    ids = _next_page(conn, svc, after, before)
+    if not ids:
+        result.complete = True
+        return result
+    result.submitted_batch = _submit_page(conn, svc, client, model, ids)
+    result.submitted_count = len(ids)
+    return result
+
+
+def format_run(r: RunResult) -> str:
+    lines = [f"Backfill run — {r.scope_label}"]
+    if r.processing:
+        done, total = r.progress
+        lines.append(
+            f"  Batch {r.polled_batch}: {done:,}/{total:,} done, still processing "
+            "— re-run to poll."
+        )
+        return "\n".join(lines)
+    if r.polled_batch:  # an ended batch we ingested this run
+        s, e, sk, lab = r.counts
+        lines.append(
+            f"  Ingested batch {r.polled_batch}: {s:,} classified ({lab:,} labeled), "
+            f"{e:,} errored, {sk:,} skipped for retry."
+        )
+    if r.submitted_batch:
+        lines.append(
+            f"  Submitted {r.submitted_count:,} message(s) as batch "
+            f"{r.submitted_batch} — re-run to poll."
+        )
+    if r.complete:
+        lines.append("  Nothing left to classify — backfill complete for this scope.")
     return "\n".join(lines)

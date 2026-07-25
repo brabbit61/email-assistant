@@ -27,7 +27,10 @@ from googleapiclient.discovery import Resource, build
 
 from assistant.config import Config, load
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/calendar.events",
+]
 
 
 def service(creds: Credentials) -> Resource:

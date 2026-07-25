@@ -79,43 +79,57 @@ def make_client(api_key: str) -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=api_key)
 
 
+def request_params(model: str, email: Email) -> dict:
+    """The `messages.create` (and Batch API request) kwargs for one email. The
+    rubric, structured-output schema, and prompt shape live here so the
+    synchronous `classify()` and Phase-3 backfill's Batch API path submit
+    byte-identical requests (T3.5, issue #69) — one classifier contract, two
+    transports."""
+    prompt = f"From: {email.sender}\nSubject: {email.subject}\n\n{email.body}"
+    return {
+        "model": model,
+        "max_tokens": 512,
+        # ponytail: no-op below Haiku's 4096-token cache floor (rubric is ~800);
+        # free until then, auto-caches once the improvement loop grows the rubric.
+        "system": [
+            {
+                "type": "text",
+                "text": _RUBRIC_PATH.read_text(),
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        "messages": [{"role": "user", "content": prompt}],
+        "output_config": {"format": {"type": "json_schema", "schema": _SCHEMA}},
+    }
+
+
+def verdict_from_message(message) -> Verdict:
+    """Parse a completed model response — synchronous or a Batch API result's
+    `.message` — into a Verdict. A missing text block or off-shape JSON becomes
+    UNCLASSIFIED, never a raise (same contract as the sync path's parse)."""
+    try:
+        text = next(b.text for b in message.content if b.type == "text")
+        data = json.loads(text)
+        return Verdict(data["category"], data["priority"], data["reasoning"])
+    except (StopIteration, json.JSONDecodeError, KeyError, TypeError) as e:
+        return Verdict(UNCLASSIFIED, None, f"malformed_response: {type(e).__name__}")
+
+
 def classify(
     client: anthropic.Anthropic, model: str, email: Email
 ) -> tuple[Verdict, Usage]:
     """One classification attempt. Never raises: any failure — API outage,
     oversized context, malformed response — becomes an UNCLASSIFIED verdict that
     surfaces in `status` for a later retry."""
-    prompt = f"From: {email.sender}\nSubject: {email.subject}\n\n{email.body}"
     try:
-        resp = client.messages.create(
-            model=model,
-            max_tokens=256,
-            # ponytail: no-op below Haiku's 4096-token cache floor (rubric is ~800);
-            # free until then, auto-caches once the improvement loop grows the rubric.
-            system=[
-                {
-                    "type": "text",
-                    "text": _RUBRIC_PATH.read_text(),
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            messages=[{"role": "user", "content": prompt}],
-            output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},
-        )
+        resp = client.messages.create(**request_params(model, email))
     except Exception as e:  # noqa: BLE001 — never crash the worker on one email
         return Verdict(UNCLASSIFIED, None, f"api_error: {type(e).__name__}"), Usage(
             model, 0, 0
         )
 
     usage = Usage(model, resp.usage.input_tokens, resp.usage.output_tokens)
-    try:
-        text = next(b.text for b in resp.content if b.type == "text")
-        data = json.loads(text)
-        return Verdict(data["category"], data["priority"], data["reasoning"]), usage
-    except (StopIteration, json.JSONDecodeError, KeyError, TypeError) as e:
-        return Verdict(
-            UNCLASSIFIED, None, f"malformed_response: {type(e).__name__}"
-        ), usage
+    return verdict_from_message(resp), usage
 
 
 def record(
@@ -125,11 +139,15 @@ def record(
     usage: Usage,
     *,
     actor: str = "worker",
+    source: str = "worker",
     batch: bool = False,
 ) -> int:
     """Persist the llm_calls + classifications rows (append-only). On a CHECK
     violation — an off-taxonomy category the schema failed to prevent — rewrite
-    the classification as UNCLASSIFIED so the mutation is recorded, not lost."""
+    the classification as UNCLASSIFIED so the mutation is recorded, not lost.
+
+    `source` tags the classification's origin (T3.5 backfill passes 'backfill'
+    so its rows stay out of the actionable set); defaults to 'worker'."""
     now = store.now_iso()
     cur = conn.execute(
         "INSERT INTO llm_calls"
@@ -156,6 +174,7 @@ def record(
             verdict.reasoning,
             llm_call_id,
             now,
+            source,
         )
     except sqlite3.IntegrityError:
         _insert_classification(
@@ -166,17 +185,18 @@ def record(
             f"off_taxonomy: {verdict.category!r}",
             llm_call_id,
             now,
+            source,
         )
     conn.commit()
     return llm_call_id
 
 
 def _insert_classification(
-    conn, gmail_message_id, category, priority, reasoning, llm_call_id, now
+    conn, gmail_message_id, category, priority, reasoning, llm_call_id, now, source
 ):
     conn.execute(
         "INSERT INTO classifications"
-        "(gmail_message_id, category, priority, reasoning, llm_call_id, classified_at) "
-        "VALUES (?,?,?,?,?,?)",
-        (gmail_message_id, category, priority, reasoning, llm_call_id, now),
+        "(gmail_message_id, category, priority, reasoning, llm_call_id, classified_at, "
+        " source) VALUES (?,?,?,?,?,?,?)",
+        (gmail_message_id, category, priority, reasoning, llm_call_id, now, source),
     )

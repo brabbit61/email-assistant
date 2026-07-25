@@ -43,13 +43,19 @@ def _messages_needing_classification(conn: sqlite3.Connection) -> list[sqlite3.R
     """New messages, plus any whose latest classification is still UNCLASSIFIED —
     the retry behavior classify.py's own docstring promises. A human-recorded
     UNCLASSIFIED (a Gmail label removed by Jenit, source != 'worker') is *not*
-    retried: the worker must not fight a correction."""
+    retried: the worker must not fight a correction.
+
+    origin != 'poll' (backfill-inserted) is excluded unconditionally — even with
+    no classification row yet — so the live loop can never mistake a backfill
+    message merely awaiting retry (#69's expired/canceled results are left
+    unclassified on purpose) for genuinely new mail (#69, source isolation)."""
     return conn.execute(
         "SELECT m.gmail_message_id, m.sender, m.subject, m.body FROM messages m "
         "LEFT JOIN current_classifications c "
         "  ON c.gmail_message_id = m.gmail_message_id "
-        "WHERE c.gmail_message_id IS NULL "
-        "   OR (c.category = ? AND c.source = 'worker')",
+        "WHERE m.origin = 'poll' "
+        "  AND (c.gmail_message_id IS NULL "
+        "       OR (c.category = ? AND c.source = 'worker'))",
         (UNCLASSIFIED,),
     ).fetchall()
 
@@ -355,15 +361,17 @@ def cmd_costs(args: argparse.Namespace) -> int:
             f"${r['cost']:.4f}   {r['model']}"
         )
 
-    days_seen = conn.execute(
-        "SELECT COUNT(DISTINCT substr(created_at, 1, 10)) FROM llm_calls "
-        "WHERE created_at LIKE ?",
+    # Daily average is measured against the soft cap, so — like the soft-cap ping
+    # (telegram.notify_budget) — it excludes actor='backfill' one-time spend,
+    soft_total, soft_days = conn.execute(
+        "SELECT COALESCE(SUM(cost_usd), 0), COUNT(DISTINCT substr(created_at, 1, 10)) "
+        "FROM llm_calls WHERE created_at LIKE ? AND actor != 'backfill'",
         (like,),
-    ).fetchone()[0]
-    if days_seen:
+    ).fetchone()
+    if soft_days:
         print(
-            f"Daily average: ${total / days_seen:.4f}/day "
-            f"(soft cap ${cfg.daily_usd_soft_cap:.4f}/day)"
+            f"Daily average: ${soft_total / soft_days:.4f}/day "
+            f"(soft cap ${cfg.daily_usd_soft_cap:.4f}/day, excl. backfill)"
         )
 
     daily = conn.execute(
@@ -481,8 +489,9 @@ def _actionable_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         "       m.sender, m.subject, m.thread_id "
         "FROM current_classifications cc "
         "JOIN messages m ON m.gmail_message_id = cc.gmail_message_id "
-        "WHERE cc.category = 'Action-Needed' "
-        "   OR cc.priority IN ('P1-Urgent', 'P2-This-Week') "
+        "WHERE (cc.category = 'Action-Needed' "
+        "       OR cc.priority IN ('P1-Urgent', 'P2-This-Week')) "
+        "  AND cc.source != 'backfill' "
         "ORDER BY cc.classified_at"
     ).fetchall()
 
@@ -560,14 +569,24 @@ def cmd_open(args: argparse.Namespace) -> int:
 
 
 def cmd_backfill(args: argparse.Namespace) -> int:
-    """`--estimate`: zero-spend, read-only projection of a `--run` backfill.
-    Required for now — `--run --confirm` (T3.5) is a separate, later ticket."""
+    """`--estimate`: zero-spend, read-only projection. `--run`: one resumable
+    Batch API step (submit/poll a page) — this one spends. The intended flow is
+    estimate first, then run; nothing in code gates the run beyond that."""
     cfg = config.load()
     conn = store.open_db(cfg.db_path)
     creds = gmail.get_credentials(cfg)
     svc = gmail.service(creds)
-    result = backfill.estimate(conn, svc, cfg.classifier_model, args.after, args.before)
-    print(backfill.format_estimate(result))
+    if args.estimate:
+        result = backfill.estimate(
+            conn, svc, cfg.classifier_model, args.after, args.before
+        )
+        print(backfill.format_estimate(result))
+        return 0
+    client = classify.make_client(cfg.secrets.anthropic_api_key)
+    run_result = backfill.run(
+        conn, svc, client, cfg.classifier_model, args.after, args.before
+    )
+    print(backfill.format_run(run_result))
     return 0
 
 
@@ -651,11 +670,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_backfill = sub.add_parser(
         "backfill", help="full-history classification via the Batch API"
     )
-    p_backfill.add_argument(
+    mode = p_backfill.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
         "--estimate",
         action="store_true",
-        required=True,
-        help="zero-spend count + cost projection (required — --run lands in T3.5)",
+        help="zero-spend count + cost projection",
+    )
+    mode.add_argument(
+        "--run",
+        action="store_true",
+        help="submit/poll one resumable Batch API page (spends; estimate first)",
     )
     p_backfill.add_argument("--after", default=None, help="YYYY-MM-DD, inclusive")
     p_backfill.add_argument("--before", default=None, help="YYYY-MM-DD, exclusive")

@@ -11,7 +11,17 @@ from datetime import datetime, timezone
 
 import pytest
 
-from assistant import classify, cli, config, correct, gmail, poll, store, telegram
+from assistant import (
+    backfill,
+    classify,
+    cli,
+    config,
+    correct,
+    gmail,
+    poll,
+    store,
+    telegram,
+)
 from assistant.classify import Usage, Verdict
 from assistant.labels import FULL_NAME
 from assistant.poll import RunResult
@@ -1072,9 +1082,89 @@ def test_backfill_estimate_wires_config_gmail_and_prints_result(
     monkeypatch.setattr(gmail, "list_message_ids", lambda svc, q: ["m1", "m2"])
     monkeypatch.setattr(gmail, "service", lambda creds: object())
 
-    code = cli.cmd_backfill(argparse.Namespace(estimate=True, after=None, before=None))
+    code = cli.cmd_backfill(
+        argparse.Namespace(estimate=True, run=False, after=None, before=None)
+    )
 
     out = capsys.readouterr().out
     assert code == 0
     assert "Backfill estimate — inbox, received mail only" in out
     assert "Messages:     2 to classify  (0 already classified, skipped)" in out
+
+
+def test_messages_needing_classification_excludes_backfill_origin(tmp_path):
+    # Regression (#69): a backfilled message whose batch result was expired/
+    # canceled is left with NO classification row on purpose, so a later
+    # backfill page can retry it. Before origin-gating, the live `assistant run`
+    # loop mistook that pending row for brand-new mail and reclassified it
+    # through the live path (priority label + P1 Telegram ping) — even though
+    # it's old historical mail backfill hasn't finished with yet.
+    conn = store.open_db(tmp_path / "triage.db")
+    conn.execute(
+        "INSERT INTO messages(gmail_message_id, sender, subject, body, "
+        "first_seen_at, origin) VALUES ('back1', 'a@b.com', 's', 'b', ?, 'backfill')",
+        (store.now_iso(),),
+    )
+    conn.execute(
+        "INSERT INTO messages(gmail_message_id, sender, subject, body, first_seen_at) "
+        "VALUES ('poll1', 'a@b.com', 's', 'b', ?)",
+        (store.now_iso(),),
+    )
+    conn.commit()
+
+    rows = cli._messages_needing_classification(conn)
+
+    ids = {r["gmail_message_id"] for r in rows}
+    assert ids == {"poll1"}  # back1 has no classification either — must not leak in
+
+
+def test_actionable_rows_excludes_backfill_source(tmp_path):
+    # Source isolation (#69): a backfilled Action-Needed message is labeled in
+    # Gmail but must never enter the actionable set feeding open/digests/pings.
+    conn = store.open_db(tmp_path / "triage.db")
+    for mid, src in (("worker1", "worker"), ("back1", "backfill")):
+        conn.execute(
+            "INSERT INTO messages(gmail_message_id, sender, subject, thread_id, "
+            "first_seen_at) VALUES (?, 'a@b.com', 'subj', 't', ?)",
+            (mid, store.now_iso()),
+        )
+        conn.execute(
+            "INSERT INTO classifications(gmail_message_id, category, priority, "
+            "reasoning, classified_at, source) "
+            "VALUES (?, 'Action-Needed', NULL, 'r', ?, ?)",
+            (mid, store.now_iso(), src),
+        )
+    conn.commit()
+
+    rows = cli._actionable_rows(conn)
+
+    ids = {r["gmail_message_id"] for r in rows}
+    assert ids == {"worker1"}  # the backfilled Action-Needed message is excluded
+
+
+def test_backfill_run_wires_client_and_prints_result(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: object())
+    monkeypatch.setattr(classify, "make_client", lambda key: object())
+
+    captured = {}
+
+    def fake_run(conn, svc, client, model, after, before):
+        captured["args"] = (model, after, before)
+        return backfill.RunResult(
+            scope_label="full history (no date bound)", complete=True
+        )
+
+    monkeypatch.setattr(backfill, "run", fake_run)
+
+    code = cli.cmd_backfill(
+        argparse.Namespace(estimate=False, run=True, after=None, before=None)
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert captured["args"][1:] == (None, None)  # after/before threaded through
+    assert "Backfill run — full history (no date bound)" in out
+    assert "Nothing left to classify" in out

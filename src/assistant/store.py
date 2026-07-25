@@ -136,6 +136,65 @@ _MIGRATIONS: list[str] = [
     ALTER TABLE classifications ADD COLUMN source TEXT NOT NULL DEFAULT 'worker'
         CHECK(source IN ('worker','human-chat','human-gmail'));
     """,
+    """
+    -- v4 -> v5: Phase-3 backfill (T3.5, issue #69). Two changes:
+    --  (a) run_events gets a typed batch_id column — the in-flight Batch API id
+    --      the resumable `backfill --run` re-polls instead of resubmitting (no
+    --      double-spend). Mirrors how history_id already types the triage
+    --      checkpoint in this same table.
+    ALTER TABLE run_events ADD COLUMN batch_id TEXT;
+
+    --  (b) classifications.source must accept 'backfill'. SQLite can't ALTER a
+    --      CHECK, so rebuild the table (nothing FK-references classifications, so
+    --      a straight copy of every append-only row is safe). Column list/order
+    --      matches the post-v4 table exactly. The current_classifications view
+    --      references the table by name, so drop it first and recreate it after
+    --      the rename (its definition is unchanged from v1->v2).
+    DROP VIEW current_classifications;
+    CREATE TABLE classifications_new (
+        id               INTEGER PRIMARY KEY,
+        gmail_message_id TEXT NOT NULL REFERENCES messages(gmail_message_id),
+        category         TEXT NOT NULL CHECK(category IN (
+                             'Action-Needed','Finance','Bills','Orders','Events',
+                             'Travel','Work','Personal','Dev','Newsletters',
+                             'Low-Value','UNCLASSIFIED')),
+        priority         TEXT CHECK(priority IN
+                             ('P1-Urgent','P2-This-Week','P3-FYI') OR priority IS NULL),
+        reasoning        TEXT,
+        llm_call_id      INTEGER REFERENCES llm_calls(id),
+        classified_at    TEXT NOT NULL,
+        source           TEXT NOT NULL DEFAULT 'worker'
+                             CHECK(source IN ('worker','human-chat','human-gmail','backfill'))
+    );
+    INSERT INTO classifications_new
+        SELECT id, gmail_message_id, category, priority, reasoning, llm_call_id,
+               classified_at, source FROM classifications;
+    DROP TABLE classifications;
+    ALTER TABLE classifications_new RENAME TO classifications;
+    CREATE INDEX idx_classifications_message ON classifications(gmail_message_id);
+    CREATE VIEW current_classifications AS
+        SELECT c.* FROM classifications c
+        WHERE c.id = (
+            SELECT MAX(c2.id) FROM classifications c2
+            WHERE c2.gmail_message_id = c.gmail_message_id
+        );
+    """,
+    """
+    -- v5 -> v6: messages.origin (T3.5 follow-up). A backfilled message is
+    -- inserted (by _submit_page) before its Batch API result is known, and an
+    -- expired/canceled result deliberately leaves no classification row so a
+    -- later page can retry it (#69's locked failure policy). Without a way to
+    -- tell "backfill's, still pending" apart from "genuinely new", the live
+    -- `assistant run` loop's classification-row-presence check mistook that
+    -- pending row for fresh mail and reclassified it through the live path —
+    -- Gmail priority label + P1 Telegram ping — for old historical mail. That
+    -- violates the actionable-set isolation the ticket requires regardless of
+    -- classification status, so gate on origin directly: the live loop now
+    -- excludes origin != 'poll' unconditionally (cli._messages_needing_classification).
+    -- DEFAULT 'poll' means poll.py's existing INSERT needs no change.
+    ALTER TABLE messages ADD COLUMN origin TEXT NOT NULL DEFAULT 'poll'
+        CHECK(origin IN ('poll','backfill'));
+    """,
 ]
 
 # Derived, not hardcoded: a literal constant here has twice drifted out of sync

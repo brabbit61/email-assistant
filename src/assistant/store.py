@@ -195,6 +195,38 @@ _MIGRATIONS: list[str] = [
     ALTER TABLE messages ADD COLUMN origin TEXT NOT NULL DEFAULT 'poll'
         CHECK(origin IN ('poll','backfill'));
     """,
+    """
+    -- v6 -> v7: FTS5 search index over messages (T4.4, issue #80). External-
+    -- content mode (content='messages') avoids duplicating sender/subject/body
+    -- text, but needs a stable INTEGER content_rowid — messages' own PK is TEXT
+    -- (gmail_message_id), and its implicit rowid isn't safe to use directly (a
+    -- VACUUM can renumber it, silently desyncing the index). fts_rowid snapshots
+    -- the rowid at insert time into a real column instead.
+    ALTER TABLE messages ADD COLUMN fts_rowid INTEGER;
+    UPDATE messages SET fts_rowid = rowid;
+    CREATE UNIQUE INDEX idx_messages_fts_rowid ON messages(fts_rowid);
+
+    CREATE VIRTUAL TABLE messages_fts USING fts5(
+        sender, subject, body,
+        content='messages', content_rowid='fts_rowid',
+        tokenize='porter unicode61'
+    );
+    INSERT INTO messages_fts(rowid, sender, subject, body)
+        SELECT fts_rowid, sender, subject, body FROM messages;
+
+    -- New rows only: SQLite can't mutate the row being inserted from a BEFORE
+    -- trigger, so this has to be AFTER, where NEW.rowid is already assigned.
+    -- WHEN NEW.fts_rowid IS NULL means app inserts (which never set the
+    -- column) fire this; it never re-fires for rows this migration backfilled.
+    CREATE TRIGGER trg_messages_fts_insert AFTER INSERT ON messages
+    WHEN NEW.fts_rowid IS NULL
+    BEGIN
+        UPDATE messages SET fts_rowid = NEW.rowid
+            WHERE gmail_message_id = NEW.gmail_message_id;
+        INSERT INTO messages_fts(rowid, sender, subject, body)
+            VALUES (NEW.rowid, NEW.sender, NEW.subject, NEW.body);
+    END;
+    """,
 ]
 
 # Derived, not hardcoded: a literal constant here has twice drifted out of sync

@@ -116,6 +116,24 @@ Five base tables: `messages`, `classifications`, `action_events`,
 migrations — don't memorize them, run `.schema` yourself before writing an
 ad-hoc query.
 
+For "find my emails from X" / "the one about Y" questions, search
+`messages_fts` (an FTS5 index over sender/subject/body, stemmed) instead of
+scanning `messages` with `LIKE`:
+```sql
+SELECT m.gmail_message_id, m.sender, m.subject
+FROM messages_fts JOIN messages m ON m.fts_rowid = messages_fts.rowid
+WHERE messages_fts MATCH 'deposit'
+ORDER BY bm25(messages_fts, 5.0, 5.0, 1.0)
+LIMIT 20;
+```
+The `bm25(...)` weights favor a sender/subject match over a body match — a
+question about "the email from Chase" should rank a sender hit above a body
+mention. For a vague natural-language question, run it as *several* MATCH
+queries (synonyms, sender guesses, plausible date bounds) rather than one,
+and cross-check hits against `current_classifications` for category/priority
+context. This is keyword search with stemming, not semantic search — a
+paraphrase with no shared words won't match.
+
 Quirk worth knowing: each `assistant run` invocation writes **two different
 `run_id`s** — one for the poll checkpoint (`phase='finished'`), one for the
 triage pass itself (`phase='triage'`, started/ok/error/failed). `assistant

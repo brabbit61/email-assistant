@@ -12,7 +12,7 @@ daily_usd_soft_cap = 0.75 # worker-enforced from Phase 2
 [triage]
 poll_interval_minutes = 5
 dry_run = false # go-live gate: worker classifies but never writes to Gmail. Flip to false after the T1.11 sign-off.
-auto_archive_low_value = false # Phase 3 flips this on after the T1.11 go-live decision
+auto_archive_low_value = true # live per T3.1/#65 spot-check sign-off (2026-07-22)
 
 [digest]
 times = ["07:00", "13:00", "20:00"]

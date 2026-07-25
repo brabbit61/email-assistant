@@ -29,6 +29,10 @@ from assistant.config import Config, load
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
+    # Deliberately broad, not the narrower calendar.events.owned +
+    # calendar.freebusy pair — the "own events only" write boundary is
+    # enforced by calendar.py's marker check, not by the OAuth grant itself.
+    # See calendar.py's module docstring.
     "https://www.googleapis.com/auth/calendar.events",
 ]
 

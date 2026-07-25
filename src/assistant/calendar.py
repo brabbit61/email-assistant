@@ -17,6 +17,13 @@ and no audit row, if it's missing. `SOURCE_KEY` also carries the originating
 `gmail_message_id`, for T4.3's dedupe rule (an email with an existing future
 block isn't re-proposed) — not read here.
 
+The OAuth grant (`calendar.events`, see `gmail.SCOPES`) is broader than this
+boundary needs — Google's narrower `calendar.events.owned` scope would let it
+enforce "own events only" itself, but `free_slots` still needs real busy-time
+visibility across the whole calendar (a second scope, `calendar.freebusy`,
+would be required alongside it). Kept as the single broad scope; this code's
+marker check is the actual enforcement, not the grant.
+
 Everything happens in a fixed Pacific timezone: `--start`/`--after`/`--before`
 are naive ISO timestamps interpreted as `America/Los_Angeles` wall-clock (DST-
 aware via stdlib `zoneinfo`), matching S4.1's skill-file working-hours default.

@@ -23,6 +23,7 @@ from pathlib import Path
 from assistant import (
     apply,
     backfill,
+    calendar,
     classify,
     config,
     correct,
@@ -649,6 +650,114 @@ def cmd_create_draft(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- calendar (T4.2, issue #78) -----------------------------------------------
+
+
+def cmd_calendar_slots(args: argparse.Namespace) -> int:
+    """Free/busy windows on the primary calendar (read-only, no audit row)."""
+    cfg = config.load()
+    try:
+        creds = gmail.get_credentials(cfg)
+        svc = calendar.calendar_service(creds)
+        gaps = calendar.free_slots(svc, args.after, args.before, args.duration)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    except gmail.AuthError:
+        raise  # let main() format auth failures consistently
+    if not gaps:
+        print("No free windows in range.")
+        return 0
+    for gap_start, gap_end in gaps:
+        print(f"{gap_start.isoformat()} {gap_end.isoformat()}")
+    return 0
+
+
+def cmd_calendar_create(args: argparse.Namespace) -> int:
+    """Create a marker-tagged event holding the source email's context. One of
+    the agent's bounded write powers (third, alongside correct/create-draft) —
+    synchronous, Jenit/agent-initiated on request."""
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    try:
+        description = Path(args.description_file).read_text("utf-8")
+    except OSError as e:
+        print(f"could not read --description-file: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        creds = gmail.get_credentials(cfg)
+        svc = calendar.calendar_service(creds)
+        run_id = store.new_id()
+        result = calendar.create_event(
+            conn,
+            svc,
+            run_id,
+            start=args.start,
+            duration_minutes=args.duration,
+            title=args.title,
+            description=description,
+            gmail_message_id=args.gmail_message_id,
+        )
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    except gmail.AuthError:
+        raise
+    except Exception as e:
+        print(
+            f"Event creation failed — calendar not modified cleanly: {e}",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"Event {result.event_id} created → {result.start} to {result.end}")
+    return 0
+
+
+def cmd_calendar_move(args: argparse.Namespace) -> int:
+    """Move an agent-created event; refuses (no API call, no audit row) on any
+    event lacking the ownership marker."""
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    try:
+        creds = gmail.get_credentials(cfg)
+        svc = calendar.calendar_service(creds)
+        run_id = store.new_id()
+        result = calendar.move_event(conn, svc, run_id, args.event_id, args.start)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    except gmail.AuthError:
+        raise
+    except Exception as e:
+        print(f"Move failed — calendar not modified cleanly: {e}", file=sys.stderr)
+        return 1
+    print(f"Event {result.event_id} moved → {result.start} to {result.end}")
+    return 0
+
+
+def cmd_calendar_delete(args: argparse.Namespace) -> int:
+    """Delete an agent-created event; refuses (no API call, no audit row) on any
+    event lacking the ownership marker."""
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    try:
+        creds = gmail.get_credentials(cfg)
+        svc = calendar.calendar_service(creds)
+        run_id = store.new_id()
+        calendar.delete_event(conn, svc, run_id, args.event_id)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    except gmail.AuthError:
+        raise
+    except Exception as e:
+        print(f"Delete failed — calendar not modified cleanly: {e}", file=sys.stderr)
+        return 1
+    print(f"Event {args.event_id} deleted.")
+    return 0
+
+
 # --- propose (improvement loop, on-demand review) ----------------------------
 
 
@@ -741,6 +850,58 @@ def _build_parser() -> argparse.ArgumentParser:
         "--body-file", required=True, help="path to the composed reply text"
     )
     p_create_draft.set_defaults(func=cmd_create_draft)
+
+    p_calendar = sub.add_parser(
+        "calendar", help="calendar time-blocking: slots / create / move / delete"
+    )
+    calendar_sub = p_calendar.add_subparsers(dest="calendar_command", required=True)
+
+    p_cal_slots = calendar_sub.add_parser(
+        "slots", help="free/busy windows on the primary calendar (read-only)"
+    )
+    p_cal_slots.add_argument(
+        "--after", required=True, help="ISO local (Pacific) timestamp, inclusive"
+    )
+    p_cal_slots.add_argument(
+        "--before", required=True, help="ISO local (Pacific) timestamp, exclusive"
+    )
+    p_cal_slots.add_argument(
+        "--duration", required=True, type=int, help="minimum free-gap length, minutes"
+    )
+    p_cal_slots.set_defaults(func=cmd_calendar_slots)
+
+    p_cal_create = calendar_sub.add_parser(
+        "create", help="create a marker-tagged event holding an email's context"
+    )
+    p_cal_create.add_argument(
+        "--start", required=True, help="ISO local (Pacific) timestamp"
+    )
+    p_cal_create.add_argument(
+        "--duration", required=True, type=int, help="event length, minutes"
+    )
+    p_cal_create.add_argument("--title", required=True)
+    p_cal_create.add_argument(
+        "--description-file",
+        required=True,
+        help="path to the composed event description",
+    )
+    p_cal_create.add_argument(
+        "--gmail-message-id", required=True, help="source email this block is for"
+    )
+    p_cal_create.set_defaults(func=cmd_calendar_create)
+
+    p_cal_move = calendar_sub.add_parser("move", help="move an agent-created event")
+    p_cal_move.add_argument("event_id")
+    p_cal_move.add_argument(
+        "--start", required=True, help="ISO local (Pacific) timestamp"
+    )
+    p_cal_move.set_defaults(func=cmd_calendar_move)
+
+    p_cal_delete = calendar_sub.add_parser(
+        "delete", help="delete an agent-created event"
+    )
+    p_cal_delete.add_argument("event_id")
+    p_cal_delete.set_defaults(func=cmd_calendar_delete)
 
     p_propose = sub.add_parser(
         "propose",

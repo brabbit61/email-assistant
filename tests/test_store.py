@@ -10,10 +10,11 @@ TABLES = {"messages", "llm_calls", "classifications", "action_events", "run_even
 VIEWS = {"current_actions", "current_checkpoint", "current_classifications"}
 
 
-def _add_message(conn, mid="m1"):
+def _add_message(conn, mid="m1", sender=None, subject=None, body=None):
     conn.execute(
-        "INSERT INTO messages(gmail_message_id, first_seen_at) VALUES (?, ?)",
-        (mid, now_iso()),
+        "INSERT INTO messages(gmail_message_id, sender, subject, body, first_seen_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (mid, sender, subject, body, now_iso()),
     )
 
 
@@ -133,3 +134,53 @@ def test_current_classifications_exposes_source(tmp_path):
         "SELECT category, source FROM current_classifications WHERE gmail_message_id='m1'"
     ).fetchone()
     assert (row["category"], row["source"]) == ("Personal", "human-chat")
+
+
+def _fts_search(conn, query):
+    rows = conn.execute(
+        "SELECT m.gmail_message_id FROM messages_fts "
+        "JOIN messages m ON m.fts_rowid = messages_fts.rowid "
+        "WHERE messages_fts MATCH ? ORDER BY bm25(messages_fts, 5.0, 5.0, 1.0)",
+        (query,),
+    ).fetchall()
+    return [r["gmail_message_id"] for r in rows]
+
+
+def test_new_message_is_searchable_immediately(tmp_path):
+    # No separate reindex step — the AFTER INSERT trigger syncs it inline.
+    conn = open_db(tmp_path / "triage.db")
+    _add_message(conn, sender="billing@chase.com", subject="Invoice", body="due soon")
+    conn.commit()
+    assert _fts_search(conn, "invoice") == ["m1"]
+
+
+def test_stemmed_query_matches(tmp_path):
+    conn = open_db(tmp_path / "triage.db")
+    _add_message(conn, body="Your payments this month totaled $50")
+    conn.commit()
+    assert _fts_search(conn, "payment") == ["m1"]  # stems to 'payments' in body
+
+
+def test_sender_subject_body_all_searchable(tmp_path):
+    conn = open_db(tmp_path / "triage.db")
+    _add_message(conn, mid="a", sender="rao.office@clinic.com")
+    _add_message(conn, mid="b", subject="lease renewal decision")
+    _add_message(conn, mid="c", body="benefits enrollment form attached")
+    conn.commit()
+    assert _fts_search(conn, "clinic") == ["a"]
+    assert _fts_search(conn, "lease") == ["b"]
+    assert _fts_search(conn, "enrollment") == ["c"]
+
+
+def test_duplicate_insert_does_not_error_or_duplicate_fts_row(tmp_path):
+    conn = open_db(tmp_path / "triage.db")
+    _add_message(conn, sender="original")
+    conn.commit()
+    conn.execute(
+        "INSERT OR IGNORE INTO messages(gmail_message_id, sender, first_seen_at) "
+        "VALUES ('m1', 'dup', ?)",
+        (now_iso(),),
+    )
+    conn.commit()
+    assert conn.execute("SELECT count(*) FROM messages_fts").fetchone()[0] == 1
+    assert conn.execute("SELECT sender FROM messages").fetchone()[0] == "original"

@@ -11,7 +11,11 @@ tie-break rules decide. Never invent a label.
   budgeting app updates, brokerage market orders
 - **Bills** — a specific payment *you owe* with a due date: utility, card
   statement, invoice, rent, a subscription renewal charge
-- **Orders** — purchase confirmations, shipping/delivery updates, returns.
+- **Orders** — purchase confirmations, shipping/delivery updates, returns,
+  and post-purchase "thanks for shopping with us" mail tied to a real
+  transaction you made — even without an itemized receipt, even if it also
+  asks for a review. Not the same as unprompted retailer marketing from a
+  store you haven't just bought from.
 - **Events** — invitations, RSVPs, calendar/meeting mail, event tickets.
 - **Travel** — flights, trains, hotels, itineraries, check-in, airplace tickets.
 - **Work** — human professional correspondence: colleagues, clients, your
@@ -23,8 +27,7 @@ tie-break rules decide. Never invent a label.
 - **Personal** — real humans who know you (friends, family), not work.
 - **Newsletters** — subscribed bulk content you chose to receive, 
   tech news subscription updates
-- **Low-Value** — unsolicited / no-reply / marketing / spam, including
-  **recruiter cold-emails** (even when a real person sent them). **Excludes**
+- **Low-Value** — unsolicited / no-reply / marketing / spam. **Excludes**
   job-application submission confirmations, status updates, rejections, and
   interview-process mail for roles *you applied to* — those are **Work**
   (see below), never Low-Value, even when sent by an automated ATS
@@ -32,6 +35,13 @@ tie-break rules decide. Never invent a label.
   Apply. The distinguishing question: did you initiate the application?
   If yes → Work, not Low-Value, no matter how automated/bulk the sender's
   system is.
+  **Also excludes recruiter/business outreach that pitches one specific,
+  named role or opportunity directly to you** — Work instead, even when
+  cold, even when sent through an automated ATS/mailer template. Reserve
+  Low-Value for genuine bulk/aggregator content: multi-listing job-alert
+  digests (LinkedIn Job Alerts, Glassdoor recommendation emails with
+  several postings), not a single targeted pitch — those may still lead
+  somewhere (you've replied to some), so they're Work, not noise.
 
 ## Tie-breaks
 
@@ -39,6 +49,15 @@ tie-break rules decide. Never invent a label.
 - Automated technical → **Dev**; human professional → **Work**; a known human,
   personal → **Personal**; unsolicited selling → **Low-Value** (even from a real
   person).
+- A sender you have an established one-on-one history with (a program
+  contact, a vendor/account you're already signed up with, an ongoing
+  business relationship) keeps that relationship's category even when a
+  given email is bulk/broadcast-addressed or reads like a feature/product
+  update — sender history overrides "looks like marketing."
+- An application or reply for something *you* initiated (rental, membership,
+  service inquiry — not just a job) is not marketing merely because the
+  first contact came from the other side; classify by what it's about
+  (e.g. a rental application → **Personal**), not as Low-Value.
 - If it needs your action by a deadline, **Action-Needed** overrides the topical
   category.
 - A marketing/promotional deadline (a sale ending, early-bird pricing, a "last

@@ -26,6 +26,7 @@ from assistant import (
     classify,
     config,
     correct,
+    draft,
     gmail,
     poll,
     propose,
@@ -615,6 +616,39 @@ def cmd_correct(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- create-draft (T3.2, issue #66) -------------------------------------------
+
+
+def cmd_create_draft(args: argparse.Namespace) -> int:
+    """Place a reply-all draft in the given thread, composed text from
+    --body-file, quoted-back + threaded. One of the agent's bounded write
+    powers (never send) — synchronous, Jenit/agent-initiated on request."""
+    cfg = config.load()
+    conn = store.open_db(cfg.db_path)
+    try:
+        body_text = Path(args.body_file).read_text("utf-8")
+    except OSError as e:
+        print(f"could not read --body-file: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        creds = gmail.get_credentials(cfg)
+        svc = gmail.service(creds)
+        result = draft.create_draft_reply(conn, svc, args.thread_id, body_text)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    except gmail.AuthError:
+        raise  # let main() format auth failures consistently
+    except Exception as e:
+        print(
+            f"Draft creation failed — Gmail not modified cleanly: {e}", file=sys.stderr
+        )
+        return 1
+    print(f"Draft {result.draft_id} created → to {result.to}")
+    return 0
+
+
 # --- propose (improvement loop, on-demand review) ----------------------------
 
 
@@ -697,6 +731,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="omit to clear any priority label",
     )
     p_correct.set_defaults(func=cmd_correct)
+
+    p_create_draft = sub.add_parser(
+        "create-draft",
+        help="place a Gmail draft reply (reply-all, threaded, quoted-back)",
+    )
+    p_create_draft.add_argument("thread_id", help="Gmail thread id to reply within")
+    p_create_draft.add_argument(
+        "--body-file", required=True, help="path to the composed reply text"
+    )
+    p_create_draft.set_defaults(func=cmd_create_draft)
 
     p_propose = sub.add_parser(
         "propose",

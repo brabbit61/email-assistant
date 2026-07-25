@@ -17,6 +17,7 @@ from assistant import (
     cli,
     config,
     correct,
+    draft,
     gmail,
     poll,
     store,
@@ -1024,6 +1025,65 @@ def test_correct_dispatch_unknown_id_exits_one(tmp_path, monkeypatch, capsys):
 
     assert code == 1
     assert "unknown message id" in capsys.readouterr().err
+
+
+# --- create-draft dispatch (#66) ----------------------------------------------
+
+
+def test_create_draft_dispatch_prints_summary_and_exits_zero(
+    tmp_path, monkeypatch, capsys
+):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: object())
+    monkeypatch.setattr(
+        draft,
+        "create_draft_reply",
+        lambda *a, **k: draft.DraftResult("draft123", "alice@example.com", []),
+    )
+    body_file = tmp_path / "reply.txt"
+    body_file.write_text("Thanks, will do.")
+
+    code = cli.cmd_create_draft(
+        argparse.Namespace(thread_id="t1", body_file=str(body_file))
+    )
+
+    assert code == 0
+    assert "draft123" in capsys.readouterr().out
+
+
+def test_create_draft_dispatch_value_error_exits_one(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: object())
+
+    def _raise(*a, **k):
+        raise ValueError("no messages found for thread: nope")
+
+    monkeypatch.setattr(draft, "create_draft_reply", _raise)
+    body_file = tmp_path / "reply.txt"
+    body_file.write_text("Thanks, will do.")
+
+    code = cli.cmd_create_draft(
+        argparse.Namespace(thread_id="nope", body_file=str(body_file))
+    )
+
+    assert code == 1
+    assert "no messages found" in capsys.readouterr().err
+
+
+def test_create_draft_missing_body_file_exits_one(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+
+    code = cli.cmd_create_draft(
+        argparse.Namespace(thread_id="t1", body_file=str(tmp_path / "nope.txt"))
+    )
+
+    assert code == 1
+    assert "could not read --body-file" in capsys.readouterr().err
 
 
 def test_run_leaves_human_unclassified_alone(tmp_path, monkeypatch):

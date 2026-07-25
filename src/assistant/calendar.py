@@ -154,7 +154,9 @@ def create_event(
     end_local = start_local + timedelta(minutes=duration_minutes)
 
     action_id = store.new_id()
-    detail = f"start={start_local.isoformat()}; duration={duration_minutes}m; title={title}"
+    detail = (
+        f"start={start_local.isoformat()}; duration={duration_minutes}m; title={title}"
+    )
     _record_intended(
         conn, action_id, "calendar_create", actor, run_id, gmail_message_id, detail
     )
@@ -172,14 +174,28 @@ def create_event(
         event = svc.events().insert(calendarId=_CALENDAR_ID, body=body).execute()
     except Exception as e:
         _record_terminal(
-            conn, action_id, "calendar_create", actor, run_id, gmail_message_id,
-            detail, "failed", str(e),
+            conn,
+            action_id,
+            "calendar_create",
+            actor,
+            run_id,
+            gmail_message_id,
+            detail,
+            "failed",
+            str(e),
         )
         raise
 
     _record_terminal(
-        conn, action_id, "calendar_create", actor, run_id, gmail_message_id,
-        f"{detail}; event_id={event['id']}", "confirmed", None,
+        conn,
+        action_id,
+        "calendar_create",
+        actor,
+        run_id,
+        gmail_message_id,
+        f"{detail}; event_id={event['id']}",
+        "confirmed",
+        None,
     )
     return CreateResult(event["id"], start_local.isoformat(), end_local.isoformat())
 
@@ -218,14 +234,28 @@ def move_event(
         ).execute()
     except Exception as e:
         _record_terminal(
-            conn, action_id, "calendar_move", actor, run_id, None, detail,
-            "failed", str(e),
+            conn,
+            action_id,
+            "calendar_move",
+            actor,
+            run_id,
+            None,
+            detail,
+            "failed",
+            str(e),
         )
         raise
 
     _record_terminal(
-        conn, action_id, "calendar_move", actor, run_id, None, detail,
-        "confirmed", None,
+        conn,
+        action_id,
+        "calendar_move",
+        actor,
+        run_id,
+        None,
+        detail,
+        "confirmed",
+        None,
     )
     return MoveResult(event_id, new_start_local.isoformat(), new_end_local.isoformat())
 
@@ -250,14 +280,28 @@ def delete_event(
         svc.events().delete(calendarId=_CALENDAR_ID, eventId=event_id).execute()
     except Exception as e:
         _record_terminal(
-            conn, action_id, "calendar_delete", actor, run_id, None, detail,
-            "failed", str(e),
+            conn,
+            action_id,
+            "calendar_delete",
+            actor,
+            run_id,
+            None,
+            detail,
+            "failed",
+            str(e),
         )
         raise
 
     _record_terminal(
-        conn, action_id, "calendar_delete", actor, run_id, None, detail,
-        "confirmed", None,
+        conn,
+        action_id,
+        "calendar_delete",
+        actor,
+        run_id,
+        None,
+        detail,
+        "confirmed",
+        None,
     )
 
 
@@ -304,7 +348,15 @@ def _record_intended(
         "INSERT INTO action_events"
         "(action_id, status, action_type, actor, run_id, gmail_message_id, "
         " detail, recorded_at) VALUES (?, 'intended', ?, ?, ?, ?, ?, ?)",
-        (action_id, action_type, actor, run_id, gmail_message_id, detail, store.now_iso()),
+        (
+            action_id,
+            action_type,
+            actor,
+            run_id,
+            gmail_message_id,
+            detail,
+            store.now_iso(),
+        ),
     )
     conn.commit()
 
@@ -325,8 +377,15 @@ def _record_terminal(
         "(action_id, status, action_type, actor, run_id, gmail_message_id, "
         " detail, error, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            action_id, status, action_type, actor, run_id, gmail_message_id,
-            detail, error, store.now_iso(),
+            action_id,
+            status,
+            action_type,
+            actor,
+            run_id,
+            gmail_message_id,
+            detail,
+            error,
+            store.now_iso(),
         ),
     )
     conn.commit()

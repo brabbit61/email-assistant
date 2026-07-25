@@ -1,7 +1,7 @@
 [project]
 name = "email-assistant"
 version = "0.1.0"
-description = "Personal Gmail triage worker + hermes-agent email assistant (see PLAN.md)"
+description = "Self-hosted Gmail triage: a deterministic AI labeling worker plus a guardrailed Telegram chat agent"
 requires-python = ">=3.13"
 dependencies = [
     "google-api-python-client",

@@ -90,7 +90,6 @@ if command -v hermes >/dev/null 2>&1; then
 	echo "==> restricting hermes to this repo's skill only"
 	hermes skills opt-out --remove --yes ||
 		echo "warning: could not opt hermes out of bundled skills"
-	echo "note: if the hermes gateway is already running, 'hermes gateway restart' picks up the reduced skill set."
 
 	# Registers the 3 digest cron jobs from hermes/cron-jobs.md (T2.5, #45).
 	# Grep-guarded on job name so re-running never creates duplicates; picked
@@ -121,6 +120,10 @@ if command -v hermes >/dev/null 2>&1; then
 	else
 		echo "note: secrets/.env or TELEGRAM_CHAT_ID missing — skipping digest cron registration (see README)."
 	fi
+
+	echo "==> restarting hermes gateway to pick up the changes above"
+	hermes gateway restart ||
+		echo "warning: could not restart hermes gateway (not installed as a service yet? see deploy/hermes-gateway.md)"
 else
 	echo "note: hermes CLI not found on PATH — skipping hermes skill link + display config (install hermes first, then re-run)."
 fi

@@ -75,7 +75,10 @@ def _owned_event(event_id, start, end):
         "start": {"dateTime": start, "timeZone": "America/Los_Angeles"},
         "end": {"dateTime": end, "timeZone": "America/Los_Angeles"},
         "extendedProperties": {
-            "private": {"assistant": "email-assistant", "source_gmail_message_id": "msg1"}
+            "private": {
+                "assistant": "email-assistant",
+                "source_gmail_message_id": "msg1",
+            }
         },
     }
 
@@ -106,7 +109,9 @@ def test_slots_excludes_busy_and_filters_short_gaps():
     ]
 
     # 200 min fits the 4h afternoon gap (240m) but not the 3h morning gap (180m).
-    gaps_200 = calendar.free_slots(svc, "2026-07-27T09:00:00", "2026-07-27T17:00:00", 200)
+    gaps_200 = calendar.free_slots(
+        svc, "2026-07-27T09:00:00", "2026-07-27T17:00:00", 200
+    )
     assert gaps_200 == [(datetime(2026, 7, 27, 13, 0), datetime(2026, 7, 27, 17, 0))]
 
 
@@ -115,8 +120,14 @@ def test_slots_dst_boundary_uses_real_elapsed_time():
     hours (the 2am hour doesn't exist), not 6 — proves the duration filter uses
     aware (zoneinfo) arithmetic, not naive wall-clock subtraction."""
     svc = FakeService(busy=[])
-    assert len(calendar.free_slots(svc, "2026-03-08T00:00:00", "2026-03-08T06:00:00", 300)) == 1
-    assert calendar.free_slots(svc, "2026-03-08T00:00:00", "2026-03-08T06:00:00", 301) == []
+    assert (
+        len(calendar.free_slots(svc, "2026-03-08T00:00:00", "2026-03-08T06:00:00", 300))
+        == 1
+    )
+    assert (
+        calendar.free_slots(svc, "2026-03-08T00:00:00", "2026-03-08T06:00:00", 301)
+        == []
+    )
 
 
 def test_slots_rejects_offset_aware_input():

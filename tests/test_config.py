@@ -90,5 +90,6 @@ def test_dry_run_explicit_false_parses(tmp_path):
 
 
 def test_missing_config_toml_is_clear(tmp_path):
-    with pytest.raises(ConfigError, match="config.toml missing or malformed"):
+    # Missing file points the user at the template, not a cryptic parse error.
+    with pytest.raises(ConfigError, match="config.example.toml"):
         load(home=tmp_path)

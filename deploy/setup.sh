@@ -12,6 +12,13 @@ command -v uv >/dev/null 2>&1 || {
 echo "==> syncing dependencies (.venv)"
 uv sync --project "$ROOT"
 
+# First run: seed config.toml from the tracked template. It's gitignored, so your
+# live values (dry_run, caps, timezone) never get committed. Ships safe (dry-run).
+if [ ! -f "$ROOT/config.toml" ]; then
+	echo "==> creating config.toml from config.example.toml (safe dry-run defaults)"
+	cp "$ROOT/config.example.toml" "$ROOT/config.toml"
+fi
+
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$UNIT_DIR"
 
@@ -132,5 +139,14 @@ echo
 systemctl --user list-timers assistant.timer --no-pager || true
 echo
 echo "Done. Logs: journalctl --user -u assistant.service -f"
-echo "Worker is in DRY-RUN trial mode (config.toml [triage] dry_run = true): it"
-echo "classifies but never writes to Gmail. Go live per deploy/go-live.md."
+
+# Report the ACTUAL configured mode, not a hardcoded guess.
+DRY_RUN="$("$ROOT/.venv/bin/python" -c "import tomllib,pathlib; print(tomllib.load(open(pathlib.Path('$ROOT')/'config.toml','rb'))['triage'].get('dry_run', True))" 2>/dev/null || echo unknown)"
+if [ "$DRY_RUN" = "True" ]; then
+	echo "Worker is in DRY-RUN mode (config.toml [triage] dry_run = true): it classifies"
+	echo "but never writes to Gmail. Go live per deploy/go-live.md."
+elif [ "$DRY_RUN" = "False" ]; then
+	echo "Worker is LIVE (config.toml [triage] dry_run = false): it applies Gmail labels for real."
+else
+	echo "note: could not read dry_run from config.toml — check the file before relying on it."
+fi

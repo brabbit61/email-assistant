@@ -52,14 +52,16 @@ class Config:
 
 
 def _find_root(home: Path | None) -> Path:
-    """Repo root = the dir holding config.toml. Explicit arg > env override > search up from CWD."""
+    """Repo root = the dir holding config.toml (or the shipped config.example.toml,
+    so a fresh clone still resolves before you copy it). Explicit arg > env override
+    > search up from CWD."""
     if home is not None:
         return Path(home)
     env = os.environ.get("EMAIL_ASSISTANT_HOME")
     if env:
         return Path(env)
     for d in (Path.cwd(), *Path.cwd().parents):
-        if (d / "config.toml").is_file():
+        if (d / "config.toml").is_file() or (d / "config.example.toml").is_file():
             return d
     raise ConfigError(
         "Could not locate config.toml. Run from the repo, or set EMAIL_ASSISTANT_HOME."
@@ -83,6 +85,11 @@ def load(home: Path | None = None) -> Config:
     root = _find_root(home)
 
     config_path = root / "config.toml"
+    if not config_path.is_file():
+        raise ConfigError(
+            f"config.toml not found at {config_path}. "
+            "Copy the template: cp config.example.toml config.toml"
+        )
     try:
         with config_path.open("rb") as f:
             data = tomllib.load(f)

@@ -1,11 +1,11 @@
-"""On-demand improvement-loop review (issue #46; spec docs/improvement-loop.md).
+"""On-demand improvement-loop review (spec docs/improvement-loop.md).
 
 `assistant propose` reviews the classification corrections captured since the last
 review (Flow A/B, `source != 'worker'`) plus the behavioral/style notes hermes
 passes via `--notes`. One Sonnet call judges whether a *recurring pattern* warrants
 an edit; if so it opens a **draft** PR editing only `rubric.md` and/or the skill's
 Digest-structure / Conversation-playbook sections. No pattern -> no PR. Nothing
-self-merges — merge is the apply step, always Jenit's.
+self-merges — merge is the apply step, always the user's.
 
 The three editable targets are the loop's entire blast radius: the schema enum plus
 the section splitter make the guardrails, taxonomy, code, and config *mechanically*
@@ -16,7 +16,7 @@ Watermark: a `run_events` row with `phase='review'` whose `history_id` holds the
 max classification id considered — the same id-based checkpoint idiom the poller
 uses. A failed run writes no row, so the next attempt re-reads the same corrections.
 
-The PR is built in a throwaway `git worktree` off `origin/main`: Jenit's working
+The PR is built in a throwaway `git worktree` off `origin/main`: the user's working
 checkout is never the diff base and never touched.
 """
 
@@ -43,7 +43,7 @@ _TARGETS = ["rubric", *_SKILL_SECTIONS]
 _PR_TITLE = "Improvement loop: proposed rubric/skill edits"
 _COMMIT_MSG = (
     "Improvement loop: proposed rubric/skill edits\n\n"
-    "Proposed by `assistant propose` (S2.4/#46). Review and merge to apply."
+    "Proposed by `assistant propose`. Review and merge to apply."
 )
 
 _SCHEMA = {
@@ -69,7 +69,7 @@ _SCHEMA = {
     "additionalProperties": False,
 }
 
-_SYSTEM = """You review corrections a user (Jenit) made to an email-triage assistant \
+_SYSTEM = """You review corrections the user made to an email-triage assistant \
 and propose edits to its behaviour-steering markdown only when you see a recurring, \
 generalizable pattern.
 
@@ -92,7 +92,7 @@ cannot_propose instead:
 - the hard guardrails (draft-never-send, never delete, never click links, read-only DB),
 - the fixed taxonomy (the 11 categories and 3 priorities),
 - the architecture or any source code,
-- config / tunables (digest times, budget caps, poll interval)."""
+- config / tunables (budget caps, model ids)."""
 
 
 def propose(
@@ -372,7 +372,7 @@ def _open_pr(root, files: dict[str, str], result: dict) -> str:
 
 
 def _pr_body(result: dict) -> str:
-    lines = ["Proposed by the improvement loop (`assistant propose`, S2.4/#46).", ""]
+    lines = ["Proposed by the improvement loop (`assistant propose`).", ""]
     lines.append("## Edits")
     lines += [f"- **{e['target']}** — {e['rationale']}" for e in result["edits"]]
     if result.get("one_offs"):

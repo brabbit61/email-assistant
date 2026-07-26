@@ -1,4 +1,4 @@
-"""T4.2 calendar verbs (#78): slot search, marker enforcement, audit trail.
+"""Calendar verbs: slot search, marker enforcement, audit trail.
 
 Hand-rolled fake Calendar service (freebusy/events), no network — mirrors
 test_apply.py / test_draft.py's style. Real tmp SQLite via store.open_db().

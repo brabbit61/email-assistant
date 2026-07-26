@@ -1,187 +1,226 @@
 # email-assistant
 
-Personal Gmail triage worker + a [hermes-agent](https://github.com/nousresearch/hermes-agent) Telegram chat layer on top. The full design and every locked decision live in **[PLAN.md](PLAN.md)**; ticket-by-ticket build history in **[progress.md](progress.md)**. This file is the replication guide — follow it top to bottom on a fresh machine to end up where this repo currently is.
+[![CI](https://github.com/brabbit61/email-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/brabbit61/email-assistant/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
 
-## Status
+Self-hosted Gmail triage. A small, deterministic worker classifies every new
+email into a fixed taxonomy and labels it in Gmail — then an optional Telegram
+chat agent lets you ask about your inbox, get daily digests, and act on what
+needs you. It runs on your own machine, with your own API keys, and **can never
+send or delete email** (that's a property of the code, not just a promise).
 
-**Phase 1 (triage worker) — live.** Polls Gmail every 5 min, classifies into the fixed taxonomy, applies labels for real (`dry_run = false`, go-live decided on #17).
+> ⚠️ It ships **safe by default**: `dry_run = true`, so a first run classifies
+> but writes nothing to Gmail until you deliberately go live.
 
-**Phase 2 (hermes chat layer) — partial.** Built and verified: the Telegram gateway bound and locked to one chat id (T2.1), real-time P1/budget/failure/OAuth pings sent directly by the worker (T2.2, T2.3), the hermes skill teaching the agent the CLI, taxonomy, guardrails, and conversation playbook (T2.4), and three scheduled digest cron jobs at 07:00/13:00/20:00 (T2.5). **Not yet built:** the `assistant correct` verb + improvement loop (T2.6), and the phase close-out (T2.7). Following this README today gets you a working two-way Telegram Q&A agent with automatic digests — not yet in-chat corrections; the skill itself says so when asked.
+<!-- Owner: add a screenshot or GIF here — Gmail labels + a Telegram digest.
+     e.g. ![Telegram digest](docs/images/digest.png) -->
 
-## Prerequisites (one-time human setup)
+## What you get
 
-Steps a human has to do outside this repo before anything below works. Full sign-off record in [progress.md](progress.md) (#1–#5).
+- **Automatic triage.** A systemd timer runs the worker every 5 minutes. Each
+  new email gets one of 11 category labels + a priority (P1/P2/P3), applied in
+  Gmail, using a single cheap Anthropic Haiku call per message (~$1–4/month at
+  personal volume).
+- **Urgent pings.** P1 mail (fraud, failed payments, travel disruption, same-day
+  deadlines) triggers an immediate Telegram message — sent by the worker itself,
+  independent of the chat agent.
+- **Chat with your inbox** *(optional)*. "What's urgent?", "Why did you file
+  this as Low-Value?", "How much have I spent this month?" — answered from your
+  triaged data, plus three daily digests.
+- **Bounded, gated actions.** The agent can draft a reply for you to review,
+  apply a label correction you give it, block calendar time for open action
+  items, and open an improvement-review pull request. Nothing self-sends,
+  self-merges, or deletes.
+- **Durable and auditable.** All state is an append-only SQLite event log; every
+  Gmail write is recorded before it happens. See
+  [docs/architecture.md](docs/architecture.md) for the full design and a
+  diagram.
 
-1. **Google Cloud project → Gmail API OAuth.** Create a project, enable the Gmail API, create an OAuth **desktop app** client. Consent screen: **External**, **Testing** mode, add yourself as a test user (keeps it personal-use, no Google review needed). Download the client JSON — you'll place it at `secrets/client_secret.json` below. Scope used is `gmail.modify` only (read/label/archive/draft, **not** permanent delete — the technical backing for "never delete").
-2. **Anthropic API key.** Create a key, set a console-level hard monthly spend cap. This repo's `config.toml` ships with `monthly_usd_cap = 15.00` and a worker-enforced `daily_usd_soft_cap = 0.75` — set your console cap to match or edit `config.toml`.
-3. **Telegram bot.** Create one via [@BotFather](https://t.me/BotFather), grab the token. Get your own numeric chat id (message [@userinfobot](https://t.me/userinfobot) — faster than the `getUpdates` API route). One bot, one allowed chat id.
-4. **Install hermes-agent** (needed for Phase 2 only — skip if you only want the Phase 1 worker). Follow [hermes-agent's own install instructions](https://github.com/nousresearch/hermes-agent). This repo was built and verified against tag `v2026.7.7.2`; pin a version rather than tracking main. After install, point it at Anthropic directly: in `~/.hermes/config.yaml` set `model.provider: anthropic`, `model.default: claude-haiku-4-5-20251001`, and put your Anthropic key in `~/.hermes/.env`. Verify with `hermes chat -q "hi"`.
+The system has two layers. **Layer 1** (the triage worker) is self-contained and
+gets you auto-labeled mail. **Layer 2** (the hermes chat agent) adds Telegram
+chat and digests, and needs a couple more pieces. The steps below build Layer 1
+first, then Layer 2.
 
-## Bootstrap
+## Prerequisites
 
-Requires [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`). Then:
+You do these once, outside this repo.
+
+1. **Google Cloud → Gmail + Calendar APIs.** Create a project, enable the
+   **Gmail API** and the **Google Calendar API**, then create an OAuth
+   **Desktop app** client. On the consent screen choose **External** + **Testing**
+   and add your own Google account as a test user (keeps it personal-use, no
+   Google review needed). Download the client JSON — you'll save it as
+   `secrets/client_secret.json`. The scopes used are `gmail.modify`
+   (read/label/archive/draft — **not** permanent delete) and `calendar.events`
+   (for the calendar time-blocking feature).
+2. **Anthropic API key.** Create a key at the [Anthropic Console](https://console.anthropic.com/)
+   and set a hard monthly spend cap there. `config.example.toml` also carries an
+   informational `monthly_usd_cap`.
+3. **[uv](https://docs.astral.sh/uv/)** — the only local prerequisite. It
+   installs Python 3.13 for you: `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+
+*For Layer 2 (the chat agent) you'll also need:* a **Telegram bot** (create one
+via [@BotFather](https://t.me/BotFather), and get your numeric chat id from
+[@userinfobot](https://t.me/userinfobot)); the **[`gh`](https://cli.github.com/)**
+CLI, authenticated, if you want `assistant propose` to open improvement PRs; and
+**[hermes-agent](https://github.com/nousresearch/hermes-agent)** installed.
+
+## Install and first run (Layer 1: the triage worker)
 
 ```sh
-uv sync          # installs Python 3.13, creates .venv, installs deps from uv.lock
-uv run assistant # verify the entry point resolves
-uv run ruff check
-uv run pytest    # 92 passed
+git clone https://github.com/brabbit61/email-assistant
+cd email-assistant
+
+uv sync                              # installs Python 3.13 + deps from uv.lock
+cp config.example.toml config.toml   # your local config (gitignored)
+uv run assistant                     # sanity check: prints help
+uv run pytest                        # all green, no network needed
 ```
 
-## Secrets
-
-All credentials live in `secrets/`, gitignored as a whole directory (`/secrets/`) so new credential files are covered automatically. Copy `.env.example` to `secrets/.env` and fill it in:
-
-| File | Holds |
-|---|---|
-| `secrets/.env` | `EMAIL_ANTHROPIC_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID` |
-| `secrets/client_secret.json` | Google OAuth desktop-app client (from prerequisite #1) |
-| `secrets/token.json` | Gmail OAuth token — created by the first auth flow below |
-
-Non-secret tunables (model ids, budget caps, digest times, poll interval) live in the committed `config.toml`.
-
-hermes-agent keeps its **own**, separate credentials at `~/.hermes/.env`/`~/.hermes/config.yaml` — outside this repo entirely, and duplicating the same bot token under a different env var name (`TELEGRAM_BOT_TOKEN` there vs `TELEGRAM_TOKEN` here). Two independent processes, two independent secret stores, on purpose. See [deploy/hermes-gateway.md](deploy/hermes-gateway.md).
-
-## Gmail authorization
-
-One-time, browser-based. Requires `secrets/client_secret.json` in place:
+Add your credentials:
 
 ```sh
-uv run python -m assistant.gmail   # opens browser consent, writes secrets/token.json
+# secrets/ is gitignored as a whole directory
+cp .env.example secrets/.env         # then fill in the values
+# also place your Google client JSON at secrets/client_secret.json
 ```
 
-Subsequent runs are non-interactive — the stored token refreshes silently. **Re-auth** (revoked token, password change) is the same command after deleting the token:
+`secrets/.env` holds `EMAIL_ANTHROPIC_API_KEY`, and (for Layer 2)
+`TELEGRAM_TOKEN` + `TELEGRAM_CHAT_ID`.
+
+Authorize Gmail once (opens a browser):
 
 ```sh
-rm secrets/token.json && uv run python -m assistant.gmail
+uv run python -m assistant.gmail     # writes secrets/token.json
 ```
 
-A permanently unrefreshable token makes the unattended worker fail loudly (records an `auth`/`error` event, exits nonzero, and — once the Telegram pieces below are wired up — sends an immediate OAuth-death ping) rather than hang.
+> Already ran an older, Gmail-only version? The Calendar scope was added later.
+> If your token predates it, re-authorize:
+> `rm secrets/token.json && uv run python -m assistant.gmail`.
 
-## Taxonomy labels
-
-Idempotent — creates the fixed taxonomy (11 categories + 3 priorities, nested under one collapsible `Assistant` label) in Gmail, or reconciles any drift. Safe to run repeatedly:
+Create the Gmail labels (idempotent — safe to re-run):
 
 ```sh
 uv run python -m assistant.labels
 ```
 
-## Running the worker unattended
-
-A systemd **user** timer fires `assistant run` every 5 minutes. One idempotent script installs it — and, if it finds `hermes` on your `PATH`, also wires up everything in the next section:
+Now do a dry run and read the verdicts — nothing is written to Gmail yet:
 
 ```sh
-./deploy/setup.sh          # uv sync, timer install, + hermes wiring if hermes is present
+uv run assistant run --dry-run
+uv run assistant review              # the classifier's verdicts + reasoning
 ```
 
-That yields a *running* timer. For it to do useful work, authorize Gmail (above) and fill `secrets/.env` first — otherwise every run fails loudly until they're present.
-
-The worker ships in **dry-run trial mode** (`config.toml` `[triage] dry_run = true` by default): it classifies but never writes to Gmail. Watch it, spot-check with `assistant review`, then flip the gate to go live — full procedure in **[deploy/go-live.md](deploy/go-live.md)**. (This repo's own `config.toml` already has `dry_run = false` — Jenit's instance went live on #17. A fresh clone should start `true` and follow the runbook.)
+Install the timer so it runs unattended every 5 minutes:
 
 ```sh
-journalctl --user -u assistant.service -f            # live logs (-n 50 for recent)
-systemctl --user list-timers assistant.timer         # next/last fire
-systemctl --user status assistant.service            # last run's result
-systemctl --user stop assistant.timer                # pause / resume
-systemctl --user start assistant.timer
-systemctl --user disable --now assistant.timer       # stop and remove from boot
+./deploy/setup.sh                    # writes + enables a systemd user timer
 ```
 
-After changing dependencies or the units, just rerun `./deploy/setup.sh`. Missed windows (machine asleep) run **once** on wake, not once per skipped interval (`Persistent=true`).
+Watch it for a day or two, spot-check with `assistant review`, then **go live**
+by editing `config.toml`:
 
-## `assistant` CLI reference
+```toml
+[triage]
+dry_run = false
+```
 
-The seam between the worker, hermes, and manual debugging — plain text on stdout, exit 0/1.
-
-| Verb | Purpose |
-|---|---|
-| `assistant run [--dry-run]` | one poll → classify → apply pass (what the timer calls) |
-| `assistant status` | checkpoint age, last run, health |
-| `assistant costs [--month YYYY-MM]` | spend by model/purpose vs. budget cap |
-| `assistant audit [--since ISO]` | chronological confirmed/failed actions + reasoning |
-| `assistant review [--since ISO]` | classifier verdicts, for dry-run-trial spot-checking |
-| `assistant open` | the actionable set (Action-Needed / P1 / P2), cross-checked live against Gmail |
-
-## Hermes agent — Telegram chat layer (Phase 2)
-
-Everything below is optional if you only want the silent triage worker. It gets you a bot you can actually talk to: "what's urgent", "why did you file X as Y", "how much have I spent this month" — see the skill's [Conversation playbook](hermes/email-assistant/SKILL.md) for the full intent list and example dialogues.
-
-**1. Bind the gateway to your bot.** One-time config in hermes's own files (not this repo's `secrets/`), then install it as a service. Full runbook: **[deploy/hermes-gateway.md](deploy/hermes-gateway.md)**.
+The running timer picks that up on its next tick. Full go-live checklist and
+rollback: [deploy/go-live.md](deploy/go-live.md).
 
 ```sh
-hermes gateway install   # writes + enables the systemd user service, starts it
-hermes gateway status    # confirm active
+journalctl --user -u assistant.service -f      # live logs
+systemctl --user list-timers assistant.timer   # next/last fire
+systemctl --user stop assistant.timer          # pause; `start` to resume
 ```
 
-**2. Wire up the skill and lock hermes down.** `./deploy/setup.sh` (rerun it — it's idempotent) does three things automatically once it detects `hermes` on `PATH`:
+> **Not on Linux?** The worker itself is portable (it's just `assistant run`),
+> but the unattended runner uses systemd user timers. On macOS/Windows, run
+> `assistant run` on a schedule with launchd / Task Scheduler instead.
 
-- **Symlinks the skill** — `hermes/email-assistant/` into `~/.hermes/skills/email/email-assistant`. The repo stays the single source of truth; edits here are live for the agent immediately, no reinstall.
-- **Quiets the chat display** — sets `display.interim_assistant_messages` and `display.tool_progress` to `false` in `~/.hermes/config.yaml`. Without this, hermes narrates every tool call/command into the Telegram chat, which reads as broken, not transparent.
-- **Restricts hermes to this repo's skill** — `hermes skills opt-out --remove --yes`, removing every bundled skill (himalaya, google-workspace, the creative/research/dev tool skills, etc.) so `email-assistant` is the only thing hermes can reach for.
+## Configuration reference
 
-> **Why the lockdown matters, concretely:** without it, a generic bundled email skill can get picked for an "email" question ahead of this repo's purpose-built one — and, worse, one of them will happily try to walk you through handing it a raw Gmail password to configure IMAP/SMTP access. That's a completely separate, ungated write channel with none of this project's guardrails (never send / never delete / never click links / read-only-except-two-bounded-writes). **Never give hermes your Gmail password** — the only credential it should ever need is nothing; all Gmail access flows through the worker's own OAuth token via `assistant open`/the CLI, read-only.
+All non-secret tunables live in `config.toml` (copied from
+`config.example.toml`, gitignored so your live values never get committed).
 
-This is a global change to your hermes profile, not scoped to this repo — it removes skills you may have used for unrelated things. Reversible any time: `hermes skills opt-in --sync`. If the gateway was already running when you run this, pick up the change with:
+| Key | Default | Meaning |
+|---|---|---|
+| `[models] classifier` | `claude-haiku-4-5-20251001` | Model for per-email triage. Must exist in your Anthropic account **and** in `pricing.PRICES` (an unknown model warns and books $0 rather than crashing). |
+| `[models] reviewer` | `claude-sonnet-5` | Model for the improvement-loop review (`assistant propose`). |
+| `[budget] monthly_usd_cap` | `15.00` | Informational; enforce the real cap in the Anthropic console. |
+| `[budget] daily_usd_soft_cap` | `0.75` | Worker-enforced soft cap; a breach sends a Telegram alert. |
+| `[triage] dry_run` | `true` | **The go-live gate.** `true` = classify only, never touch Gmail. Flip to `false` to apply labels for real. |
+| `[triage] auto_archive_low_value` | `false` | When live, archive `Low-Value` mail out of the inbox. Off by default so a fresh install never removes mail until you opt in. |
+| `[calendar] timezone` | `America/Los_Angeles` | IANA timezone for calendar time-blocking. **Set this to your own zone** (e.g. `Europe/London`). |
 
-```sh
-hermes gateway restart
-```
+The hermes chat agent's model and the digest schedule are configured by
+`deploy/setup.sh`, not `config.toml` — see below.
 
-**3. Register the three digests.** Also part of `./deploy/setup.sh`: three hermes cron jobs (07:00 / 13:00 / 20:00, host-local time) that each tell the agent to compose and send a digest per the skill's [Digest structure](hermes/email-assistant/SKILL.md) section — cumulative standing state, a staleness warning if the checkpoint is stale, and (evening) the running monthly spend. Definitions live in [hermes/cron-jobs.md](hermes/cron-jobs.md); registration is idempotent (name-guarded) and picked up live by the gateway's cron ticker, no restart needed. Inspect or change them:
+## Layer 2: the Telegram chat agent (optional)
 
-```sh
-hermes cron list                      # see all three, next-run times
-hermes cron run email-digest-morning  # fire one now, off-schedule
-hermes cron remove <job-id>           # delete, then rerun setup.sh to recreate
-```
+This gets you a bot you can talk to and three daily digests. It runs
+[hermes-agent](https://github.com/nousresearch/hermes-agent) (a separate,
+MIT-licensed process) with its **own** credentials under `~/.hermes/`, driven by
+this repo's skill file. Full runbook:
+[deploy/hermes-gateway.md](deploy/hermes-gateway.md).
 
-**4. Verify.** From your Telegram account, message the bot:
-- `ping` → confirms the round-trip (vanilla hermes reply)
-- `what's urgent?` → should answer from `assistant open`, not narrate a command
-- `delete all my newsletters` → should refuse, citing the guardrail, with a manual Gmail path
+1. **Install and configure hermes-agent.** Follow its own install docs; pin a
+   released version rather than tracking `main`. Point it at Anthropic and set
+   its default model to `claude-sonnet-5` (the digests do multi-constraint
+   formatting/arithmetic that smaller models drop). Put your Anthropic key in
+   `~/.hermes/.env`.
+2. **Bind the Telegram gateway** to your bot and lock it to your chat id
+   (fail-closed — only your id gets a reply). See the runbook.
+3. **Wire up the skill and lock hermes down.** Re-run `./deploy/setup.sh`: once
+   it detects `hermes` on your `PATH` it symlinks this repo's skill into hermes,
+   quiets the chat display, restricts hermes to just this skill, and registers
+   the three digest cron jobs (07:00 / 13:00 / 20:00, host-local time).
 
-Lockdown inversion test (confirms the allowlist is fail-closed): stop the gateway, temporarily set a wrong id in `~/.hermes/.env`'s `TELEGRAM_ALLOWED_USERS`, restart, message from your real account and confirm **silence** (no reply, no pairing prompt), then restore the real id and restart again. Full steps in [deploy/hermes-gateway.md](deploy/hermes-gateway.md).
+> **Never give hermes your Gmail password.** A generic bundled email skill could
+> otherwise try to walk you through handing over IMAP/SMTP credentials — a
+> completely separate, ungated write channel with none of this project's
+> guardrails. All Gmail access flows through the worker's own OAuth token via
+> the read-only `assistant` CLI. The lockdown step above removes those bundled
+> skills for exactly this reason.
 
-```sh
-journalctl --user -u hermes-gateway -f   # gateway logs
-hermes gateway status                    # service state
-hermes skills list                       # should show exactly one skill: email-assistant
-```
+Verify from your Telegram account:
 
-## Layout
+- `what's urgent?` → answers from your triaged data (no command narration)
+- `delete all my newsletters` → refuses, cites the guardrail, gives the manual path
 
-```
-src/assistant/          # the triage worker + `assistant` CLI (Phase 1)
-  gmail.py                 OAuth + Gmail API client
-  classify.py               Haiku structured-output classifier
-  rubric.md                 taxonomy + tie-break rules (source of truth, read live by classify.py)
-  poll.py                   incremental history-API poller + checkpoint
-  apply.py                  label/archive applier, audit-before-write
-  telegram.py                worker's own pings: P1, budget, failure, OAuth-death, recovery
-  store.py                   SQLite schema + migrations, shared helpers
-  cli.py                     the `assistant` subcommands
-hermes/
-  email-assistant/          # the hermes skill (Phase 2) — versioned here, symlinked live
-    SKILL.md                  CLI reference, taxonomy, guardrails, schema notes,
-                               digest structure (#37), conversation playbook (#39)
-  cron-jobs.md               # the 3 digest cron job definitions (T2.5, #45)
-deploy/
-  setup.sh                  idempotent: venv, systemd timer, + hermes wiring + digest cron if present
-  go-live.md                 Phase-1 dry-run → live runbook
-  hermes-gateway.md          Telegram gateway bind + lockdown runbook
-docs/
-  improvement-loop.md        S2.4 design (not yet built — T2.6)
-  adr/                       architecture decision records
-tests/                    # pytest, hand-rolled fakes at the Gmail/Telegram seams, no network
-config.toml              # non-secret tunables — committed
-secrets/                 # credentials — gitignored, never committed
-data/                    # runtime state (triage.db) — gitignored, created at runtime
-```
+## Troubleshooting
+
+- **`ConfigError: config.toml not found`** — you skipped `cp config.example.toml config.toml`.
+- **`ConfigError: Missing required secrets`** — `secrets/.env` is absent or a key
+  is blank. The message names exactly which key.
+- **`AuthError` / token refresh failed** — the OAuth token is missing, revoked,
+  or expired. Re-authorize: `rm secrets/token.json && uv run python -m assistant.gmail`.
+- **Labels don't appear after going live** — run `uv run python -m assistant.labels`
+  to (re)create the taxonomy, and confirm `dry_run = false`.
+- **`assistant propose` fails** — it needs an authenticated `gh` CLI
+  (`gh auth login`).
+- **`warning: no pricing for model …`** — your `[models]` id isn't in
+  `pricing.PRICES`. Triage keeps working, but the cost ledger records $0 for
+  that model until you add its rates.
+- **Calendar events land at the wrong time** — set `[calendar] timezone` to your
+  own IANA zone.
 
 ## Costs
 
-Actuals so far track the estimate in [PLAN.md](PLAN.md): ~$1–4/mo on Haiku for ongoing classification at personal mail volume, a few dollars more once digests/chat are in regular use on Sonnet. `assistant costs` shows the real breakdown at any time.
+Roughly **$1–4/month** on Haiku for ongoing classification at personal mail
+volume, plus a few dollars more once digests/chat are in regular use on Sonnet.
+`assistant costs` shows the real breakdown at any time.
 
-## Migrating to another machine
+## Moving to another machine
 
-Clone the repo, `uv sync`, copy `secrets/` and `data/` over, run `./deploy/setup.sh`. For the hermes layer, install hermes-agent fresh on the new machine (its profile under `~/.hermes/` isn't repo state) and repeat the "Hermes agent" section above — `setup.sh` re-running there does the skill link, display quieting, and lockdown the same way. Planned as Phase 5 (dedicated always-on box); not yet executed.
+Clone the repo, `uv sync`, copy your `secrets/` and `data/` directories over,
+`cp config.example.toml config.toml` (and restore your live values), then run
+`./deploy/setup.sh`. For Layer 2, install hermes-agent fresh on the new machine
+(its `~/.hermes/` profile isn't repo state) and repeat the Layer 2 steps.
+
+## Contributing & security
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). For anything
+security-sensitive, see [SECURITY.md](SECURITY.md) (please don't use a public
+issue). Licensed under the [MIT License](LICENSE).

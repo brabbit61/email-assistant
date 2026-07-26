@@ -1,4 +1,4 @@
-"""T1.3 Gmail auth: branch selection (valid / refresh / interactive), loud failure, 0600 token."""
+"""Gmail auth: branch selection (valid / refresh / interactive), loud failure, 0600 token."""
 
 import stat
 
@@ -40,14 +40,12 @@ def _config(tmp_path):
         token_path=tmp_path / "secrets" / "token.json",
         db_path=tmp_path / "data" / "triage.db",
         classifier_model="m",
-        agent_model="m",
         reviewer_model="m",
         monthly_usd_cap=1.0,
         daily_usd_soft_cap=1.0,
         auto_archive_low_value=False,
         dry_run=True,
-        poll_interval_minutes=5,
-        digest_times=("07:00",),
+        calendar_timezone="America/Los_Angeles",
         secrets=Secrets("a", "b", "c"),
     )
 

@@ -1,13 +1,31 @@
 [project]
 name = "email-assistant"
 version = "0.1.0"
-description = "Personal Gmail triage worker + hermes-agent email assistant (see PLAN.md)"
+description = "Self-hosted Gmail triage: a deterministic AI labeling worker plus a guardrailed Telegram chat agent"
+readme = "README.md"
 requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Jenit Jain" }]
+keywords = ["gmail", "email", "triage", "llm", "anthropic", "claude", "automation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Email",
+    "Topic :: Office/Business",
+]
 dependencies = [
     "google-api-python-client",
     "google-auth-oauthlib",
     "anthropic",
 ]
+
+[project.urls]
+Homepage = "https://github.com/brabbit61/email-assistant"
+Repository = "https://github.com/brabbit61/email-assistant"
+Issues = "https://github.com/brabbit61/email-assistant/issues"
 
 [project.scripts]
 assistant = "assistant.cli:main"
@@ -20,7 +38,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-# Real-API fixtures (#15) are paid + flaky; keep them out of the default run.
+# Real-API fixtures are paid + flaky; keep them out of the default run.
 # `pytest` excludes them; `pytest -m fixtures` (command-line -m wins) runs only them.
 addopts = "-m 'not fixtures'"
 markers = ["fixtures: real-API classifier fixtures (paid, opt-in; run with -m fixtures)"]

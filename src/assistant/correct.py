@@ -1,5 +1,5 @@
-"""Human corrections to classifications — the two capture channels of the S2.4
-improvement loop (issue #46), both landing an append-only `classifications` row
+"""Human corrections to classifications — the two capture channels of the
+improvement loop, both landing an append-only `classifications` row
 marked with its `source`.
 
 - **Flow B — `correct()`** (chat): the agent runs `assistant correct <id>
@@ -7,7 +7,7 @@ marked with its `source`.
   taxonomy label, add the new one) *first*, then record the re-classification —
   Gmail-first so a failed relabel never leaves a row claiming a change that
   didn't happen. `source='human-chat'`.
-- **Flow A — `detect_relabels()`** (poll): Jenit relabels a triaged message in
+- **Flow A — `detect_relabels()`** (poll): the user relabels a triaged message in
   Gmail; the next poll sees the taxonomy labels no longer match the latest verdict
   and records the human re-classification. `source='human-gmail'`. Gmail is already
   right, so nothing is written back to Gmail.

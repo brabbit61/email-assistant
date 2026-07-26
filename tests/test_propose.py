@@ -1,4 +1,4 @@
-"""T2.6 on-demand review (#46): `propose.propose` and its mechanical guardrail.
+"""On-demand review: `propose.propose` and its mechanical guardrail.
 
 The git/gh mechanics are faked at the `subprocess.run` seam (records argv, returns
 canned output, creates the worktree dirs so the real file writes land); the Sonnet
@@ -95,14 +95,12 @@ def _cfg(tmp_path):
         token_path=tmp_path / "tok.json",
         db_path=tmp_path / "data" / "triage.db",
         classifier_model="haiku",
-        agent_model="sonnet",
         reviewer_model="claude-sonnet-5",
         monthly_usd_cap=15.0,
         daily_usd_soft_cap=0.75,
-        poll_interval_minutes=5,
         dry_run=False,
         auto_archive_low_value=False,
-        digest_times=("07:00",),
+        calendar_timezone="America/Los_Angeles",
         secrets=Secrets("sk-ant-test", "tok", "chat"),
     )
 

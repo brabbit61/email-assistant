@@ -1,5 +1,4 @@
-"""Label applier: audit-before-write application of classifier verdicts to Gmail
-(T1.7, issue #13).
+"""Label applier: audit-before-write application of classifier verdicts to Gmail.
 
 `intended` `action_events` rows are written before the Gmail API call; `confirmed`
 (success) or `failed` (re-raised) rows are written after — the audit trail can
@@ -10,7 +9,7 @@ terminal event follows it.
 
 Idempotent: applying the same labels twice is harmless (Gmail's `addLabelIds` is
 a no-op on a label already present), so a crash-reprocessed message just gets a
-new `action_id` — an extra log entry, not a bug (T1.5's crash-reprocess safety
+new `action_id` — an extra log entry, not a bug (the crash-reprocess safety
 depends on this).
 
 `dry_run=True` skips the Gmail call *and* every `action_events` write — an
@@ -113,7 +112,7 @@ def apply_relabel(
     """Apply a human correction to Gmail: add the new taxonomy labels, remove the
     superseded ones, in one combined modify. Same audit-before-write contract as
     `apply_verdict` (one `action_id` per elementary add/remove; `label_remove` is a
-    new action_type). No dry_run — a correction is an explicit, Jenit-initiated
+    new action_type). No dry_run — a correction is an explicit, user-initiated
     action, not the unattended run the go-live gate protects."""
     actions = [(store.new_id(), "label_add", name) for name in add_names]
     actions += [(store.new_id(), "label_remove", name) for name in remove_names]

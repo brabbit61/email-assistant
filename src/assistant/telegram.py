@@ -1,5 +1,4 @@
-"""Telegram sendMessage: the worker's direct, agent-independent P1 ping path
-(T2.2, issue #42; formats/triggers signed off in S2.2, #38).
+"""Telegram sendMessage: the worker's direct, agent-independent P1 ping path.
 
 Two responsibilities: the raw stdlib POST to Telegram's API (`send`), and the
 P1 ping orchestration (`notify_p1`) — dedupe, burst-collapse into one message,
@@ -10,14 +9,14 @@ between `intended` and `confirmed` risks a rare duplicate ping on retry —
 accepted (loud beats silent for a P1).
 
 Strictly send-only: never calls getUpdates or registers a webhook, so it never
-contends with the hermes gateway's long-poll (T2.1, #41 — the gateway is the
-bot's sole poller; sendMessage has no such single-consumer limit).
+contends with the hermes gateway's long-poll — the gateway is the
+bot's sole poller; sendMessage has no such single-consumer limit.
 
 A failed send is recorded as a `failed` action_event and swallowed here — it
 never raises past `notify_p1`, never touches `run_events`, and never affects
 the run's exit code. Notification health and triage health are separate
-signals (T2.2 decision): a flaky Telegram API must not make `assistant
-status` call a healthy worker unhealthy, and must not feed S2.2's N=5
+signals (decision): a flaky Telegram API must not make `assistant
+status` call a healthy worker unhealthy, and must not feed the N=5
 consecutive-run-failure alert, which is reserved for actual triage failures.
 """
 
@@ -60,11 +59,10 @@ def _already_notified(conn: sqlite3.Connection, gmail_message_id: str) -> bool:
 
 
 def _compose(fresh: list[tuple[str, sqlite3.Row, Verdict]]) -> str:
-    """P1 mockups per #38, minus the two Phase-2 gaps: the draft-link line
-    (Phase 2 has no drafting — S2.3's grounding rule omits rather than
-    fabricates) and the burst's "reply with a number to open" line (the
-    worker never receives replies — that's the hermes gateway, #41 — and no
-    Phase-2 intent resolves a bare numeric reference; see #42 decisions)."""
+    """Render the P1 ping text. Two deliberate omissions: no draft-link line
+    (the worker doesn't draft — the grounding rule omits rather than fabricates)
+    and no "reply with a number to open" line (the worker only sends; it never
+    receives replies — that's the hermes gateway's job)."""
     if len(fresh) == 1:
         _, row, verdict = fresh[0]
         return f"🔴 Urgent — {row['sender']} — {row['subject']} \n{verdict.reasoning}"
@@ -126,15 +124,15 @@ def notify_p1(
     _record(conn, actions, run_id, "confirmed", None)
 
 
-# --- operational pings (T2.3, #43) -------------------------------------------
+# --- operational pings -------------------------------------------
 # Budget-breach, consecutive-failure, OAuth-death and recovery alerts. Formats
-# and thresholds are signed off in #38; this is only the send/dedupe wiring.
+# and thresholds live in the mockups above; this is only the send/dedupe wiring.
 # Same contract as notify_p1: one action_events row per ping (here with no
 # gmail_message_id), audit-before-write, and never raises. Unlike P1 these fire
 # regardless of dry_run — they report real worker state (spend, crashes, dead
-# auth), which is just as real during the dry-run trial (#43 decision).
+# auth), which is just as real during the dry-run trial (decision).
 
-FAILURE_THRESHOLD = 5  # consecutive crashed runs before the failure alert (#38)
+FAILURE_THRESHOLD = 5  # consecutive crashed runs before the failure alert
 
 
 def _record_op(
@@ -197,7 +195,7 @@ def notify_failure(
     *,
     send_fn: SendFn | None = None,
 ) -> None:
-    """Fire once when consecutive crashed runs reach FAILURE_THRESHOLD (#38).
+    """Fire once when consecutive crashed runs reach FAILURE_THRESHOLD.
     Call from the run's crash path *after* its status='failed' triage row is
     written. The streak = 'failed' triage rows since the last ok/error; dedupe =
     at most one failure_ping per streak (none newer than that last success)."""
@@ -246,7 +244,7 @@ def notify_recovery(
 ) -> None:
     """On a clean completion, fire once if an unacknowledged alert is outstanding
     — the latest failure_ping or oauth_ping is newer than the latest recovery_ping.
-    One recovery message covers both a failure streak and an OAuth outage (#43)."""
+    One recovery message covers both a failure streak and an OAuth outage."""
     last_alert, last_recovery = conn.execute(
         "SELECT "
         "(SELECT MAX(recorded_at) FROM action_events "
@@ -273,10 +271,10 @@ def notify_budget(
     send_fn: SendFn | None = None,
 ) -> None:
     """Fire once on the first run of a UTC day whose cumulative spend crosses the
-    daily soft cap (#38). UTC not local (#43) — matches the cost ledger and what
+    daily soft cap. UTC not local — matches the cost ledger and what
     `assistant costs` shows. Ping-only; nothing pauses."""
     today = store.now_iso()[:10]
-    # Backfill (T3.5) is deliberate one-time spend, never checked against the daily
+    # Backfill is deliberate one-time spend, never checked against the daily
     # soft cap — exclude actor='backfill' so a backfill day can't false-trip this.
     spend = conn.execute(
         "SELECT COALESCE(SUM(cost_usd), 0) FROM llm_calls "
@@ -321,7 +319,7 @@ def notify_oauth_death(
 ) -> None:
     """Fire immediately on permanent auth failure (gmail.AuthError), once per
     outage. get_credentials runs before any run_event, so an auth death writes
-    none and never feeds the failure counter (#38); dedupe instead keys on the
+    none and never feeds the failure counter; dedupe instead keys on the
     last successful auth (the last triage 'started' row) — silent until a later
     run authenticates again."""
     last_auth = conn.execute(

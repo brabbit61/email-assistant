@@ -12,6 +12,13 @@ command -v uv >/dev/null 2>&1 || {
 echo "==> syncing dependencies (.venv)"
 uv sync --project "$ROOT"
 
+# First run: seed config.toml from the tracked template. It's gitignored, so your
+# live values (dry_run, caps, timezone) never get committed. Ships safe (dry-run).
+if [ ! -f "$ROOT/config.toml" ]; then
+	echo "==> creating config.toml from config.example.toml (safe dry-run defaults)"
+	cp "$ROOT/config.example.toml" "$ROOT/config.toml"
+fi
+
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$UNIT_DIR"
 
@@ -72,7 +79,7 @@ if command -v hermes >/dev/null 2>&1; then
 	# Matches config.toml's [models] agent — digests/chat need a model that
 	# reliably follows multi-constraint formatting/arithmetic instructions;
 	# Haiku was tried and dropped a lead-in sentence + miscounted digest
-	# totals on live testing (T2.5, #45).
+	# totals on live testing.
 	echo "==> setting hermes's default model to match config.toml's [models] agent"
 	hermes config set model.default claude-sonnet-5 ||
 		echo "warning: could not set model.default"
@@ -91,7 +98,7 @@ if command -v hermes >/dev/null 2>&1; then
 	hermes skills opt-out --remove --yes ||
 		echo "warning: could not opt hermes out of bundled skills"
 
-	# Registers the 3 digest cron jobs from hermes/cron-jobs.md (T2.5, #45).
+	# Registers the 3 digest cron jobs from hermes/cron-jobs.md.
 	# Grep-guarded on job name so re-running never creates duplicates; picked
 	# up live by the gateway's cron ticker on its next tick, no restart needed.
 	if [ -f "$ROOT/secrets/.env" ] && grep -q '^TELEGRAM_CHAT_ID=' "$ROOT/secrets/.env"; then
@@ -110,11 +117,11 @@ if command -v hermes >/dev/null 2>&1; then
 		}
 
 		register_digest "email-digest-morning" "0 7 * * *" \
-			"Compose and send Jenit's MORNING email digest now, following the Digest structure section of your email-assistant skill (morning window: overnight since 20:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
+			"Compose and send the MORNING email digest now, following the Digest structure section of your email-assistant skill (morning window: overnight since 20:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
 		register_digest "email-digest-midday" "0 13 * * *" \
-			"Compose and send Jenit's MIDDAY email digest now, following the Digest structure section of your email-assistant skill (midday window: since 07:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
+			"Compose and send the MIDDAY email digest now, following the Digest structure section of your email-assistant skill (midday window: since 07:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
 		register_digest "email-digest-evening" "0 20 * * *" \
-			"Compose and send Jenit's EVENING email digest now, following the Digest structure section of your email-assistant skill (evening window: since 13:00; end with the running monthly spend line per the skill). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
+			"Compose and send the EVENING email digest now, following the Digest structure section of your email-assistant skill (evening window: since 13:00; end with the running monthly spend line per the skill). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
 
 		echo "note: cron times are host-local (see hermes/cron-jobs.md); pin with 'hermes config set timezone <zone>' if this system's timezone ever changes."
 	else
@@ -132,5 +139,14 @@ echo
 systemctl --user list-timers assistant.timer --no-pager || true
 echo
 echo "Done. Logs: journalctl --user -u assistant.service -f"
-echo "Worker is in DRY-RUN trial mode (config.toml [triage] dry_run = true): it"
-echo "classifies but never writes to Gmail. Go live per deploy/go-live.md."
+
+# Report the ACTUAL configured mode, not a hardcoded guess.
+DRY_RUN="$("$ROOT/.venv/bin/python" -c "import tomllib,pathlib; print(tomllib.load(open(pathlib.Path('$ROOT')/'config.toml','rb'))['triage'].get('dry_run', True))" 2>/dev/null || echo unknown)"
+if [ "$DRY_RUN" = "True" ]; then
+	echo "Worker is in DRY-RUN mode (config.toml [triage] dry_run = true): it classifies"
+	echo "but never writes to Gmail. Go live per deploy/go-live.md."
+elif [ "$DRY_RUN" = "False" ]; then
+	echo "Worker is LIVE (config.toml [triage] dry_run = false): it applies Gmail labels for real."
+else
+	echo "note: could not read dry_run from config.toml — check the file before relying on it."
+fi

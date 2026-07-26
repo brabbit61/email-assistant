@@ -1,4 +1,4 @@
-# Synthetic classifier fixtures (T1.9, #15). No real personal data.
+# Synthetic classifier fixtures. No real personal data.
 # Each entry drives one classify.Email; expected_priority is optional
 # (present only where the rubric makes priority deterministic).
 # Run: pytest -m fixtures  (see tests/test_fixtures.py).

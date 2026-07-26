@@ -217,7 +217,18 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# email-assistant: credentials and runtime state (signed off in #6)
+# email-assistant: credentials and runtime state
 /secrets/
 /data/
 client_secret*.json
+token.json
+
+# Local config: copy config.example.toml -> config.toml (never commit your live config)
+/config.toml
+
+# SQLite databases anywhere (belt-and-suspenders alongside /data/)
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm

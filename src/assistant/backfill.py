@@ -1,9 +1,8 @@
-"""Backfill: cost estimate (T3.4, issue #68) + the checkpointed Batch API run
-(T3.5, issue #69).
+"""Backfill: cost estimate + the checkpointed Batch API run.
 
 `estimate()` is zero-spend, read-only: it counts what a `--run` would classify
-and projects a dollar cost before any spend happens — the up-front gate PLAN.md's
-Costs section requires.
+and projects a dollar cost before any spend happens — an up-front gate before
+committing to the cost.
 
 `run()` is the actual spend. It's single-step and resumable: each invocation
 either polls the one in-flight Batch API request (ingesting its results, labeling
@@ -19,8 +18,8 @@ worker's own pre-existing backlog rather than all-mail history — shared by bot
 `source='backfill'` so they never reach the actionable set (digests/pings/`open`).
 The token/cost projection uses the real average from past `classify` calls in
 `llm_calls` (self-calibrating to this mailbox and the current rubric) so the
-estimate isn't a guess; a PLAN.md constant is the fallback only before any
-classification has ever run. Estimate output format locked in S3.1 (#64).
+estimate isn't a guess; a built-in constant is the fallback only before any
+classification has ever run.
 """
 
 from __future__ import annotations
@@ -40,8 +39,8 @@ from assistant.classify import (
     verdict_from_message,
 )
 
-# ponytail: PLAN.md's rough per-email average, used only until llm_calls has
-# real classify rows to average — bump if the rubric/typical email size shifts.
+# ponytail: a rough per-email average, used only until llm_calls has real
+# classify rows to average — bump if the rubric/typical email size shifts.
 DEFAULT_AVG_INPUT_TOKENS = 1500
 DEFAULT_AVG_OUTPUT_TOKENS = 50
 
@@ -159,7 +158,7 @@ def format_estimate(r: EstimateResult) -> str:
     return "\n".join(lines)
 
 
-# --- run (T3.5, issue #69): checkpointed Batch API backfill -------------------
+# --- run: checkpointed Batch API backfill -------------------
 #
 # One invocation makes exactly one state transition, so it always terminates
 # quickly (no in-process blocking across the Batch API's minutes-to-hours
@@ -192,7 +191,7 @@ def _open_batch(conn: sqlite3.Connection) -> tuple[str, str, str] | None:
     submitted_at), or None. A batch is open until a `page_done` event names the
     same batch_id. submitted_at feeds the "still processing" elapsed-time display
     — the one thing guaranteed to change between polls even when the Batch API's
-    request_counts doesn't move until the whole batch ends (#69 follow-up)."""
+    request_counts doesn't move until the whole batch ends (follow-up)."""
     row = conn.execute(
         "SELECT run_id, batch_id, recorded_at FROM run_events "
         "WHERE phase = 'backfill' AND status = 'submitted' AND batch_id NOT IN ("
@@ -290,12 +289,12 @@ def _ingest_batch(
     remainder. Idempotent: a message already classified (a prior crashed ingest)
     is skipped. Returns (succeeded, errored, skipped, labeled).
 
-    Failure policy (locked #69): succeeded -> record + label; errored -> record
+    Failure policy (locked): succeeded -> record + label; errored -> record
     UNCLASSIFIED (terminal, so a poisoned message can't loop the backfill forever);
     expired/canceled -> skip, leaving it for a later page to retry.
 
     Priority is stripped before it's ever stored, not just before the Gmail
-    label — backfill is category-only end to end (#69), so a P1/P2 verdict on
+    label — backfill is category-only end to end, so a P1/P2 verdict on
     old mail never lands in `classifications.priority` for anything downstream
     to notice, even a future query that (unlike today's) forgets to filter
     source='backfill'."""

@@ -1,7 +1,7 @@
-"""Incremental Gmail poller (T1.5, issue #11).
+"""Incremental Gmail poller.
 
 Discovers newly-arrived INBOX mail and durably records a complete `messages` row
-for each — metadata + decoded body. No LLM, no labels: classification is T1.6.
+for each — metadata + decoded body. No LLM, no labels: classification is.
 
 State lives entirely in SQLite. Each run reads the last checkpoint (the
 `current_checkpoint` view over append-only `run_events`), asks Gmail what's new,
@@ -10,7 +10,7 @@ loses mail: the next run re-lists the same window and the message PK dedups.
 
 Three regimes:
 - **Cold start** (no checkpoint): bootstrap forward from the mailbox's current
-  historyId. Pre-existing mail is Phase-3 backfill's job, not the poller's.
+  historyId. Pre-existing mail is the backfill command's job, not the poller's.
 - **Normal wake**: history.list since the checkpoint, draining all pages.
 - **Long outage** (checkpoint historyId expired → 404): a bounded messages.list
   sweep from the last checkpoint time, recorded as a loud catch-up gap event.
@@ -57,7 +57,7 @@ def poll_once(conn: sqlite3.Connection, svc: Resource) -> RunResult:
     ).fetchone()
 
     catchup = False
-    # (message_id, changed label ids) events for Flow-A relabel detection (#46).
+    # (message_id, changed label ids) events for Flow-A relabel detection.
     # The cold-start and catch-up regimes carry none (getProfile / messages.list
     # return no label history).
     label_events: list[tuple[str, frozenset[str]]] = []
@@ -88,7 +88,7 @@ def poll_once(conn: sqlite3.Connection, svc: Resource) -> RunResult:
                 ),
             )
             conn.commit()
-            ids = gmail.list_messages_since(svc, since)
+            ids = gmail.list_message_ids(svc, f"in:inbox after:{since}")
             new_history_id = gmail.current_history_id(svc)
 
     inserted = 0

@@ -1,4 +1,4 @@
-"""Self-checks for the classifier (T1.6). The taxonomy-drift guard, the cost
+"""Self-checks for the classifier. The taxonomy-drift guard, the cost
 math, and the two failure paths (off-taxonomy → CHECK, API error → UNCLASSIFIED)."""
 
 import os
@@ -91,6 +91,8 @@ def test_check_rejects_off_taxonomy():
 def test_cost_usd():
     assert abs(classify.cost_usd(MODEL, 1_000_000, 1_000_000) - 6.0) < 1e-9
     assert abs(classify.cost_usd(MODEL, 1_000_000, 1_000_000, batch=True) - 3.0) < 1e-9
+    # Unknown model warns and books $0 rather than crashing the run.
+    assert classify.cost_usd("claude-does-not-exist", 1000, 1000) == 0.0
 
 
 # --- failure paths ---------------------------------------------------------
@@ -110,7 +112,7 @@ def test_api_error_is_unclassified():
 
 def test_malformed_response_is_unclassified():
     # Structured output can't be forced to break from a real API, so this
-    # parse-failure branch (#15) is only reachable with a fake client.
+    # parse-failure branch is only reachable with a fake client.
     client = _FakeClient(lambda _kw: _Resp("not json at all"))
     verdict, usage = classify.classify(client, MODEL, classify.Email("a", "b", "c"))
     assert verdict.category == classify.UNCLASSIFIED

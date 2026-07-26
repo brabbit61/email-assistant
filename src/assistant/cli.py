@@ -1,15 +1,13 @@
 """The `assistant` CLI: `run [--dry-run]`, `status`, `audit [--since]`, `review
-[--since]`, `costs [--month]`, `open`, `import-hermes [--hermes-db]` (T1.8 issue
-#14; `review` added in T1.11 issue #17; `open` added in T2.4 issue #44).
+[--since]`, `costs [--month]`, `open`, `import-hermes [--hermes-db]`, and more.
 
 The seam between the deterministic worker and everything else: hermes runs these
 subcommands verbatim (no MCP server, no RPC), cron/systemd read the exit code,
-Jenit reads the stdout. `run` composes poll -> classify -> apply into one pass;
+the user reads the stdout. `run` composes poll -> classify -> apply into one pass;
 `status`/`audit`/`review` are read-only reports over the same SQLite log so
 nobody has to open the DB by hand; `costs` additionally folds in hermes's own
 spend (an idempotent import) before totaling, so it never undercounts. Plain
-tabular text only — no machine-readable flag yet (added if Phase 2 hermes work
-shows a real need, per the ticket).
+tabular text only — no machine-readable flag yet (add one if a real need shows up).
 """
 
 from __future__ import annotations
@@ -44,13 +42,13 @@ from assistant.pricing import PRICES
 def _messages_needing_classification(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """New messages, plus any whose latest classification is still UNCLASSIFIED —
     the retry behavior classify.py's own docstring promises. A human-recorded
-    UNCLASSIFIED (a Gmail label removed by Jenit, source != 'worker') is *not*
+    UNCLASSIFIED (a Gmail label removed by the user, source != 'worker') is *not*
     retried: the worker must not fight a correction.
 
     origin != 'poll' (backfill-inserted) is excluded unconditionally — even with
     no classification row yet — so the live loop can never mistake a backfill
-    message merely awaiting retry (#69's expired/canceled results are left
-    unclassified on purpose) for genuinely new mail (#69, source isolation)."""
+    message merely awaiting retry (the expired/canceled results are left
+    unclassified on purpose) for genuinely new mail (source isolation)."""
     return conn.execute(
         "SELECT m.gmail_message_id, m.sender, m.subject, m.body FROM messages m "
         "LEFT JOIN current_classifications c "
@@ -75,7 +73,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         creds = gmail.get_credentials(cfg)
     except gmail.AuthError as e:
         # Auth dies before any run_event is written (so it never feeds the
-        # failure counter); the OAuth ping fires regardless of dry_run (#43).
+        # failure counter); the OAuth ping fires regardless of dry_run.
         telegram.notify_oauth_death(conn, run_id, tok, chat, str(e))
         raise  # main() prints it and exits 1
 
@@ -137,7 +135,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         # A crashed run (poll/classify blew up): record the triage terminal as
         # 'failed' — the streak signal notify_failure counts — then alert if the
         # streak hit the threshold, and let the error propagate (exit non-zero,
-        # next timer tick retries). Operational pings ignore dry_run (#43).
+        # next timer tick retries). Operational pings ignore dry_run.
         conn.execute(
             "INSERT INTO run_events(run_id, phase, status, recorded_at) "
             "VALUES (?, 'triage', 'failed', ?)",
@@ -148,7 +146,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         raise
 
     # Clean completion: recovery ping if an alert is outstanding, then the daily
-    # budget-breach check. Both fire regardless of dry_run (#43).
+    # budget-breach check. Both fire regardless of dry_run.
     telegram.notify_recovery(conn, run_id, tok, chat)
     telegram.notify_budget(
         conn,
@@ -294,7 +292,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
 
 def cmd_review(args: argparse.Namespace) -> int:
     """Classifier verdicts for eyeball spot-checking during the dry-run trial —
-    where `audit` is empty because dry runs write no action_events (T1.11)."""
+    where `audit` is empty because dry runs write no action_events."""
     cfg = config.load()
     conn = store.open_db(cfg.db_path)
     since = args.since or (datetime.now(timezone.utc) - timedelta(days=7)).strftime(
@@ -503,7 +501,7 @@ def _thread_state(svc, thread_id: str, message_id: str) -> tuple[bool, bool, boo
 
     format='minimal' returns id + labelIds per message — enough for all three
     signals, no bodies fetched. 'replied' checks the whole thread for a SENT
-    message (Jenit's own reply); 'read'/'archived' key off the classified
+    message (the user's own reply); 'read'/'archived' key off the classified
     message's own labels.
     """
     thread = (
@@ -519,11 +517,11 @@ def _thread_state(svc, thread_id: str, message_id: str) -> tuple[bool, bool, boo
 def cmd_open(args: argparse.Namespace) -> int:
     """Actionable set (Action-Needed / P1 / P2), cross-checked against live
     Gmail: cleared the moment Gmail shows it read, archived, or replied to —
-    the disjunction of #37's three signals (open needs all three to fail).
+    the disjunction of the three signals (open needs all three to fail).
 
     Read-only — the only Gmail call is threads().get. Never prints a partial
     list: a Gmail failure aborts loudly before anything is printed, since a
-    half-verified "still open" list is worse than none (grounding rule, #37).
+    half-verified "still open" list is worse than none (grounding rule).
     """
     cfg = config.load()
     conn = store.open_db(cfg.db_path)
@@ -567,7 +565,7 @@ def cmd_open(args: argparse.Namespace) -> int:
     return 0
 
 
-# --- backfill (T3.4, issue #68) -----------------------------------------------
+# --- backfill -----------------------------------------------
 
 
 def cmd_backfill(args: argparse.Namespace) -> int:
@@ -597,8 +595,8 @@ def cmd_backfill(args: argparse.Namespace) -> int:
 
 def cmd_correct(args: argparse.Namespace) -> int:
     """Apply a chat correction (intent 8): fix the Gmail label, record a
-    human-originated re-classification. Synchronous, gated by Jenit's request —
-    one of the agent's two bounded write powers (#40, #46)."""
+    human-originated re-classification. Synchronous, gated by the user's request —
+    one of the agent's two bounded write powers."""
     cfg = config.load()
     conn = store.open_db(cfg.db_path)
     try:
@@ -617,13 +615,13 @@ def cmd_correct(args: argparse.Namespace) -> int:
     return 0
 
 
-# --- create-draft (T3.2, issue #66) -------------------------------------------
+# --- create-draft -------------------------------------------
 
 
 def cmd_create_draft(args: argparse.Namespace) -> int:
     """Place a reply-all draft in the given thread, composed text from
     --body-file, quoted-back + threaded. One of the agent's bounded write
-    powers (never send) — synchronous, Jenit/agent-initiated on request."""
+    powers (never send) — synchronous, user-initiated on request."""
     cfg = config.load()
     conn = store.open_db(cfg.db_path)
     try:
@@ -650,7 +648,7 @@ def cmd_create_draft(args: argparse.Namespace) -> int:
     return 0
 
 
-# --- calendar (T4.2, issue #78) -----------------------------------------------
+# --- calendar -----------------------------------------------
 
 
 def cmd_calendar_slots(args: argparse.Namespace) -> int:
@@ -659,7 +657,9 @@ def cmd_calendar_slots(args: argparse.Namespace) -> int:
     try:
         creds = gmail.get_credentials(cfg)
         svc = calendar.calendar_service(creds)
-        gaps = calendar.free_slots(svc, args.after, args.before, args.duration)
+        gaps = calendar.free_slots(
+            svc, args.after, args.before, args.duration, tz_name=cfg.calendar_timezone
+        )
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 1
@@ -676,7 +676,7 @@ def cmd_calendar_slots(args: argparse.Namespace) -> int:
 def cmd_calendar_create(args: argparse.Namespace) -> int:
     """Create a marker-tagged event holding the source email's context. One of
     the agent's bounded write powers (third, alongside correct/create-draft) —
-    synchronous, Jenit/agent-initiated on request."""
+    synchronous, user-initiated on request."""
     cfg = config.load()
     conn = store.open_db(cfg.db_path)
     try:
@@ -698,6 +698,7 @@ def cmd_calendar_create(args: argparse.Namespace) -> int:
             title=args.title,
             description=description,
             gmail_message_id=args.gmail_message_id,
+            tz_name=cfg.calendar_timezone,
         )
     except ValueError as e:
         print(str(e), file=sys.stderr)
@@ -723,7 +724,9 @@ def cmd_calendar_move(args: argparse.Namespace) -> int:
         creds = gmail.get_credentials(cfg)
         svc = calendar.calendar_service(creds)
         run_id = store.new_id()
-        result = calendar.move_event(conn, svc, run_id, args.event_id, args.start)
+        result = calendar.move_event(
+            conn, svc, run_id, args.event_id, args.start, tz_name=cfg.calendar_timezone
+        )
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 1
@@ -765,7 +768,7 @@ def cmd_propose(args: argparse.Namespace) -> int:
     """Review corrections since the last run (intent 9): one Sonnet call judges
     whether a recurring pattern warrants an edit to rubric.md / the skill's
     digest+playbook sections, and if so opens a draft PR. No pattern -> no PR.
-    Nothing self-applies; Jenit reviews and merges."""
+    Nothing self-applies; the user reviews and merges."""
     cfg = config.load()
     conn = store.open_db(cfg.db_path)
     return propose.propose(conn, cfg, notes=args.notes, since=args.since)
@@ -860,10 +863,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "slots", help="free/busy windows on the primary calendar (read-only)"
     )
     p_cal_slots.add_argument(
-        "--after", required=True, help="ISO local (Pacific) timestamp, inclusive"
+        "--after", required=True, help="naive ISO local timestamp, inclusive"
     )
     p_cal_slots.add_argument(
-        "--before", required=True, help="ISO local (Pacific) timestamp, exclusive"
+        "--before", required=True, help="naive ISO local timestamp, exclusive"
     )
     p_cal_slots.add_argument(
         "--duration", required=True, type=int, help="minimum free-gap length, minutes"
@@ -874,7 +877,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "create", help="create a marker-tagged event holding an email's context"
     )
     p_cal_create.add_argument(
-        "--start", required=True, help="ISO local (Pacific) timestamp"
+        "--start",
+        required=True,
+        help="naive ISO local timestamp (config [calendar] timezone)",
     )
     p_cal_create.add_argument(
         "--duration", required=True, type=int, help="event length, minutes"
@@ -893,7 +898,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cal_move = calendar_sub.add_parser("move", help="move an agent-created event")
     p_cal_move.add_argument("event_id")
     p_cal_move.add_argument(
-        "--start", required=True, help="ISO local (Pacific) timestamp"
+        "--start",
+        required=True,
+        help="naive ISO local timestamp (config [calendar] timezone)",
     )
     p_cal_move.set_defaults(func=cmd_calendar_move)
 

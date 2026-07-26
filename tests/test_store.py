@@ -1,4 +1,4 @@
-"""T1.2 store: schema creation, versioning, pragmas, append-only event semantics."""
+"""Store: schema creation, versioning, pragmas, append-only event semantics."""
 
 import sqlite3
 
@@ -39,10 +39,10 @@ def test_pragmas_set(tmp_path):
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
-def test_migration_is_idempotent(tmp_path):
+def test_open_db_is_idempotent(tmp_path):
     db = tmp_path / "triage.db"
     open_db(db).close()
-    conn = open_db(db)  # second open must not re-run or error
+    conn = open_db(db)  # second open on an already-current DB is a no-op, no error
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
@@ -149,7 +149,9 @@ def _fts_search(conn, query):
 def test_new_message_is_searchable_immediately(tmp_path):
     # No separate reindex step — the AFTER INSERT trigger syncs it inline.
     conn = open_db(tmp_path / "triage.db")
-    _add_message(conn, sender="billing@chase.com", subject="Invoice", body="due soon")
+    _add_message(
+        conn, sender="billing@bank.example.com", subject="Invoice", body="due soon"
+    )
     conn.commit()
     assert _fts_search(conn, "invoice") == ["m1"]
 
@@ -163,7 +165,7 @@ def test_stemmed_query_matches(tmp_path):
 
 def test_sender_subject_body_all_searchable(tmp_path):
     conn = open_db(tmp_path / "triage.db")
-    _add_message(conn, mid="a", sender="rao.office@clinic.com")
+    _add_message(conn, mid="a", sender="rao.office@clinic.example.com")
     _add_message(conn, mid="b", subject="lease renewal decision")
     _add_message(conn, mid="c", body="benefits enrollment form attached")
     conn.commit()

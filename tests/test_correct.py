@@ -1,4 +1,4 @@
-"""T2.6 corrections (#46): Flow B `correct()` and Flow A `detect_relabels()`.
+"""Corrections: Flow B `correct()` and Flow A `detect_relabels()`.
 
 Hand-rolled fake Gmail service (labels().list, messages().get(minimal),
 messages().modify) against a real tmp SQLite — mirrors test_apply.py's style.
@@ -178,7 +178,7 @@ def _events(*mids):
 def test_detect_records_one_category_drift(tmp_path):
     conn = _conn(tmp_path)
     _seed_verdict(conn, "m1", "Work")
-    # Jenit relabeled Work -> Personal in Gmail; labels now show Personal.
+    # the user relabeled Work -> Personal in Gmail; labels now show Personal.
     svc = FakeService({"m1": ["INBOX", f"id_{FULL_NAME['Personal']}"]})
 
     n = correct.detect_relabels(conn, svc, _events("m1"))

@@ -1,20 +1,20 @@
-"""Calendar time-blocking verbs: slots / create / move / delete (T4.2, issue #78).
+"""Calendar time-blocking verbs: slots / create / move / delete.
 
 The CLI seam that lets the hermes agent search free/busy time and create, move,
-or delete calendar events on Jenit's behalf, without the agent ever touching
+or delete calendar events on the user's behalf, without the agent ever touching
 the Calendar API directly. Same audit-before-write contract as `apply.py` /
 `draft.py`: an `intended` `action_events` row before the Calendar API call,
 `confirmed`/`failed` after. No `dry_run` — like `create_draft_reply` and
-`apply_relabel`, these are explicit, Jenit-initiated one-shot actions, not the
+`apply_relabel`, these are explicit, user-initiated one-shot actions, not the
 unattended run the go-live gate protects.
 
-Write boundary (S4.1/#76, decision 7): the agent may move or delete an event
+Write boundary (decision 7): the agent may move or delete an event
 only if this code confirms it created that event, regardless of how the
 request is phrased in chat. Ownership is a private extended property
 (`MARKER_KEY`/`MARKER_VALUE`) written on `create` and checked by `_get_own_event`
 before any mutating `move`/`delete` call — refusing loudly, with no API call
 and no audit row, if it's missing. `SOURCE_KEY` also carries the originating
-`gmail_message_id`, for T4.3's dedupe rule (an email with an existing future
+`gmail_message_id`, for the dedupe rule (an email with an existing future
 block isn't re-proposed) — not read here.
 
 The OAuth grant (`calendar.events`, see `gmail.SCOPES`) is broader than this
@@ -24,14 +24,13 @@ visibility across the whole calendar (a second scope, `calendar.freebusy`,
 would be required alongside it). Kept as the single broad scope; this code's
 marker check is the actual enforcement, not the grant.
 
-Everything happens in a fixed Pacific timezone: `--start`/`--after`/`--before`
-are naive ISO timestamps interpreted as `America/Los_Angeles` wall-clock (DST-
-aware via stdlib `zoneinfo`), matching S4.1's skill-file working-hours default.
-An offset-aware input is rejected — silently assuming UTC would book the wrong
-wall-clock time.
+Timezone comes from config (`[calendar] timezone`, default America/Los_Angeles):
+`--start`/`--after`/`--before` are naive ISO timestamps interpreted as that
+zone's wall-clock (DST-aware via stdlib `zoneinfo`). An offset-aware input is
+rejected — silently assuming UTC would book the wrong wall-clock time.
 
 `create`'s event description is written verbatim from the caller — the agent
-composes the full S4.1 format (sender, subject, deadline, action, Gmail
+composes the full format (sender, subject, deadline, action, Gmail
 permalink); this module is a dumb writer, same division of labor as
 `draft.py`.
 
@@ -54,8 +53,7 @@ from googleapiclient.discovery import Resource, build
 
 from assistant import store
 
-ZONE_NAME = "America/Los_Angeles"
-TZ = ZoneInfo(ZONE_NAME)
+DEFAULT_TIMEZONE = "America/Los_Angeles"
 
 MARKER_KEY = "assistant"
 MARKER_VALUE = "email-assistant"
@@ -65,33 +63,31 @@ _CALENDAR_ID = "primary"
 
 
 @dataclass
-class CreateResult:
+class EventResult:
     event_id: str
-    start: str  # naive Pacific ISO
-    end: str
-
-
-@dataclass
-class MoveResult:
-    event_id: str
-    start: str  # naive Pacific ISO
+    start: str  # naive local ISO
     end: str
 
 
 def calendar_service(creds: Credentials) -> Resource:
-    """Build the Calendar API client. Same token as Gmail (T4.1/#77)."""
+    """Build the Calendar API client. Same token as Gmail."""
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 
 def free_slots(
-    svc: Resource, after: str, before: str, duration_minutes: int
+    svc: Resource,
+    after: str,
+    before: str,
+    duration_minutes: int,
+    tz_name: str = DEFAULT_TIMEZONE,
 ) -> list[tuple[datetime, datetime]]:
     """Maximal free gaps >= duration_minutes within [after, before) on the
-    primary calendar, as naive Pacific (start, end) pairs. Not a fixed-grid
-    enumeration — S4.1 keeps slot-selection defaults in the skill file, not
+    primary calendar, as naive local (start, end) pairs. Not a fixed-grid
+    enumeration — keeps slot-selection defaults in the skill file, not
     here; the agent picks a start within a returned gap."""
-    window_start = _parse_local(after).replace(tzinfo=TZ)
-    window_end = _parse_local(before).replace(tzinfo=TZ)
+    tz = ZoneInfo(tz_name)
+    window_start = _parse_local(after).replace(tzinfo=tz)
+    window_end = _parse_local(before).replace(tzinfo=tz)
 
     resp = (
         svc.freebusy()
@@ -106,8 +102,8 @@ def free_slots(
     )
     busy = sorted(
         (
-            datetime.fromisoformat(b["start"]).astimezone(TZ),
-            datetime.fromisoformat(b["end"]).astimezone(TZ),
+            datetime.fromisoformat(b["start"]).astimezone(tz),
+            datetime.fromisoformat(b["end"]).astimezone(tz),
         )
         for b in resp["calendars"][_CALENDAR_ID]["busy"]
     )
@@ -146,8 +142,9 @@ def create_event(
     title: str,
     description: str,
     gmail_message_id: str,
+    tz_name: str = DEFAULT_TIMEZONE,
     actor: str = "agent",
-) -> CreateResult:
+) -> EventResult:
     """Create a marker-tagged event holding the source email's context. Raises
     ValueError before any Calendar call or audit write if gmail_message_id is
     unknown (never polled) — mirrors correct.py's preflight."""
@@ -171,8 +168,8 @@ def create_event(
     body = {
         "summary": title,
         "description": description,
-        "start": {"dateTime": start_local.isoformat(), "timeZone": ZONE_NAME},
-        "end": {"dateTime": end_local.isoformat(), "timeZone": ZONE_NAME},
+        "start": {"dateTime": start_local.isoformat(), "timeZone": tz_name},
+        "end": {"dateTime": end_local.isoformat(), "timeZone": tz_name},
         "extendedProperties": {
             "private": {MARKER_KEY: MARKER_VALUE, SOURCE_KEY: gmail_message_id}
         },
@@ -204,7 +201,7 @@ def create_event(
         "confirmed",
         None,
     )
-    return CreateResult(event["id"], start_local.isoformat(), end_local.isoformat())
+    return EventResult(event["id"], start_local.isoformat(), end_local.isoformat())
 
 
 def move_event(
@@ -214,8 +211,9 @@ def move_event(
     event_id: str,
     start: str,
     *,
+    tz_name: str = DEFAULT_TIMEZONE,
     actor: str = "agent",
-) -> MoveResult:
+) -> EventResult:
     """Move an agent-created event to a new start, preserving its duration.
     Raises ValueError (no API call, no audit row) if the event isn't
     marker-tagged or can't be read."""
@@ -232,8 +230,8 @@ def move_event(
     _record_intended(conn, action_id, "calendar_move", actor, run_id, None, detail)
 
     body = {
-        "start": {"dateTime": new_start_local.isoformat(), "timeZone": ZONE_NAME},
-        "end": {"dateTime": new_end_local.isoformat(), "timeZone": ZONE_NAME},
+        "start": {"dateTime": new_start_local.isoformat(), "timeZone": tz_name},
+        "end": {"dateTime": new_end_local.isoformat(), "timeZone": tz_name},
     }
     try:
         svc.events().patch(
@@ -264,7 +262,7 @@ def move_event(
         "confirmed",
         None,
     )
-    return MoveResult(event_id, new_start_local.isoformat(), new_end_local.isoformat())
+    return EventResult(event_id, new_start_local.isoformat(), new_end_local.isoformat())
 
 
 def delete_event(
@@ -331,14 +329,11 @@ def _get_own_event(svc: Resource, event_id: str) -> dict:
 
 
 def _parse_local(iso: str) -> datetime:
-    """Parse a naive ISO timestamp as Pacific wall-clock. Rejects an
-    offset-aware input loudly — silently assuming UTC would book the wrong
-    wall-clock time."""
+    """Parse a naive ISO timestamp as local wall-clock. Rejects an offset-aware
+    input loudly — silently assuming UTC would book the wrong wall-clock time."""
     dt = datetime.fromisoformat(iso)
     if dt.tzinfo is not None:
-        raise ValueError(
-            f"expected a naive local (Pacific) timestamp, got offset-aware: {iso!r}"
-        )
+        raise ValueError(f"expected a naive local timestamp, got offset-aware: {iso!r}")
     return dt
 
 

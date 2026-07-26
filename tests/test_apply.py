@@ -1,4 +1,4 @@
-"""T1.7 label applier: audit-before-write, dry-run, archive gating, failure isolation.
+"""Label applier: audit-before-write, dry-run, archive gating, failure isolation.
 
 Fakes at the Gmail service seam (hand-rolled, no network) against a real tmp
 SQLite via store.open_db() — mirrors test_labels.py / test_poll.py's style.

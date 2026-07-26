@@ -1,4 +1,4 @@
-"""config loader: valid load, fail-loud on missing secrets, no value leaks."""
+"""Config loader: valid load, fail-loud on missing secrets, no value leaks."""
 
 import pytest
 
@@ -7,7 +7,6 @@ from assistant.config import ConfigError, load
 CONFIG_TOML = """\
 [models]
 classifier = "claude-haiku-4-5-20251001"
-agent = "claude-sonnet-5"
 reviewer = "claude-sonnet-5"
 
 [budget]
@@ -15,10 +14,6 @@ monthly_usd_cap = 15.0
 daily_usd_soft_cap = 0.75
 
 [triage]
-poll_interval_minutes = 5
-
-[digest]
-times = ["07:00", "13:00", "20:00"]
 """
 
 SECRET_TOKEN = "0000000000:SECRET-TELEGRAM-TOKEN-VALUE"
@@ -44,10 +39,11 @@ def test_load_valid(tmp_path):
     cfg = load(home=root)
     assert cfg.classifier_model == "claude-haiku-4-5-20251001"
     assert cfg.reviewer_model == "claude-sonnet-5"
-    assert cfg.poll_interval_minutes == 5
+    assert (
+        cfg.calendar_timezone == "America/Los_Angeles"
+    )  # absent [calendar] -> default
     assert cfg.dry_run is True  # absent in CONFIG_TOML -> safe default (go-live gate)
     assert cfg.auto_archive_low_value is False  # absent in CONFIG_TOML -> default
-    assert cfg.digest_times == ("07:00", "13:00", "20:00")
     assert cfg.secrets.telegram_token == SECRET_TOKEN  # quotes/comments parsed
     assert cfg.db_path == root / "data" / "triage.db"
     assert cfg.client_secret_path == root / "secrets" / "client_secret.json"
@@ -90,5 +86,6 @@ def test_dry_run_explicit_false_parses(tmp_path):
 
 
 def test_missing_config_toml_is_clear(tmp_path):
-    with pytest.raises(ConfigError, match="config.toml missing or malformed"):
+    # Missing file points the user at the template, not a cryptic parse error.
+    with pytest.raises(ConfigError, match="config.example.toml"):
         load(home=tmp_path)

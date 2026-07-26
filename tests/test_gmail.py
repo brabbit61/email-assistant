@@ -50,6 +50,15 @@ def _config(tmp_path):
     )
 
 
+def test_scopes_include_calendar_freebusy():
+    # calendar.events does NOT cover freebusy.query (confirmed against the live
+    # API — a 403 "insufficient authentication scopes" on every calendar-slots
+    # call despite events().list working fine). Regression guard: don't let this
+    # scope get dropped again without someone noticing why it's here.
+    assert "https://www.googleapis.com/auth/calendar.events" in gmail.SCOPES
+    assert "https://www.googleapis.com/auth/calendar.freebusy" in gmail.SCOPES
+
+
 def test_no_token_noninteractive_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(gmail, "_load", lambda p: None)
     with pytest.raises(gmail.AuthError):

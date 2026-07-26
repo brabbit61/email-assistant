@@ -45,6 +45,7 @@ class Config:
     daily_usd_soft_cap: float
     dry_run: bool
     auto_archive_low_value: bool
+    calendar_timezone: str
     secrets: Secrets
 
 
@@ -96,6 +97,8 @@ def load(home: Path | None = None) -> Config:
         daily_cap = float(data["budget"]["daily_usd_soft_cap"])
         dry_run = bool(data["triage"].get("dry_run", True))  # default safe (gate)
         auto_archive = bool(data["triage"].get("auto_archive_low_value", False))
+        # Optional: absent -> Pacific, so an existing config.toml keeps working.
+        calendar_tz = data.get("calendar", {}).get("timezone", "America/Los_Angeles")
     except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError, ValueError) as e:
         raise ConfigError(
             f"config.toml missing or malformed ({config_path}): {e}"
@@ -124,6 +127,7 @@ def load(home: Path | None = None) -> Config:
         daily_usd_soft_cap=daily_cap,
         dry_run=dry_run,
         auto_archive_low_value=auto_archive,
+        calendar_timezone=calendar_tz,
         secrets=Secrets(
             anthropic_api_key=env["EMAIL_ANTHROPIC_API_KEY"],
             telegram_token=env["TELEGRAM_TOKEN"],

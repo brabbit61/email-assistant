@@ -410,7 +410,8 @@ effort yourself, reading the email fresh — round to 5-minute intervals, no
 cap — and never propose a slot past its deadline.
 
 Default slot search: **09:00–21:00, primary calendar, next 7 days.**
-Compute the Pacific-wall-clock ISO bounds yourself and call `assistant
+Compute the wall-clock ISO bounds (in the instance's configured timezone)
+yourself and call `assistant
 calendar slots --after --before --duration <estimate>` per item; steer the
 window per-conversation on request. A durable preference ("evenings only
 from now on") isn't a new config key — log it as a dated note the same way

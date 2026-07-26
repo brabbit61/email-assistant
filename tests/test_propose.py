@@ -100,6 +100,7 @@ def _cfg(tmp_path):
         daily_usd_soft_cap=0.75,
         dry_run=False,
         auto_archive_low_value=False,
+        calendar_timezone="America/Los_Angeles",
         secrets=Secrets("sk-ant-test", "tok", "chat"),
     )
 

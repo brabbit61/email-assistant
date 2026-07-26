@@ -39,6 +39,9 @@ def test_load_valid(tmp_path):
     cfg = load(home=root)
     assert cfg.classifier_model == "claude-haiku-4-5-20251001"
     assert cfg.reviewer_model == "claude-sonnet-5"
+    assert (
+        cfg.calendar_timezone == "America/Los_Angeles"
+    )  # absent [calendar] -> default
     assert cfg.dry_run is True  # absent in CONFIG_TOML -> safe default (go-live gate)
     assert cfg.auto_archive_low_value is False  # absent in CONFIG_TOML -> default
     assert cfg.secrets.telegram_token == SECRET_TOKEN  # quotes/comments parsed

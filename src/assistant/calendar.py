@@ -24,11 +24,10 @@ visibility across the whole calendar (a second scope, `calendar.freebusy`,
 would be required alongside it). Kept as the single broad scope; this code's
 marker check is the actual enforcement, not the grant.
 
-Everything happens in a fixed Pacific timezone: `--start`/`--after`/`--before`
-are naive ISO timestamps interpreted as `America/Los_Angeles` wall-clock (DST-
-aware via stdlib `zoneinfo`), matching the skill-file working-hours default.
-An offset-aware input is rejected — silently assuming UTC would book the wrong
-wall-clock time.
+Timezone comes from config (`[calendar] timezone`, default America/Los_Angeles):
+`--start`/`--after`/`--before` are naive ISO timestamps interpreted as that
+zone's wall-clock (DST-aware via stdlib `zoneinfo`). An offset-aware input is
+rejected — silently assuming UTC would book the wrong wall-clock time.
 
 `create`'s event description is written verbatim from the caller — the agent
 composes the full format (sender, subject, deadline, action, Gmail
@@ -54,8 +53,7 @@ from googleapiclient.discovery import Resource, build
 
 from assistant import store
 
-ZONE_NAME = "America/Los_Angeles"
-TZ = ZoneInfo(ZONE_NAME)
+DEFAULT_TIMEZONE = "America/Los_Angeles"
 
 MARKER_KEY = "assistant"
 MARKER_VALUE = "email-assistant"
@@ -77,14 +75,19 @@ def calendar_service(creds: Credentials) -> Resource:
 
 
 def free_slots(
-    svc: Resource, after: str, before: str, duration_minutes: int
+    svc: Resource,
+    after: str,
+    before: str,
+    duration_minutes: int,
+    tz_name: str = DEFAULT_TIMEZONE,
 ) -> list[tuple[datetime, datetime]]:
     """Maximal free gaps >= duration_minutes within [after, before) on the
-    primary calendar, as naive Pacific (start, end) pairs. Not a fixed-grid
+    primary calendar, as naive local (start, end) pairs. Not a fixed-grid
     enumeration — keeps slot-selection defaults in the skill file, not
     here; the agent picks a start within a returned gap."""
-    window_start = _parse_local(after).replace(tzinfo=TZ)
-    window_end = _parse_local(before).replace(tzinfo=TZ)
+    tz = ZoneInfo(tz_name)
+    window_start = _parse_local(after).replace(tzinfo=tz)
+    window_end = _parse_local(before).replace(tzinfo=tz)
 
     resp = (
         svc.freebusy()
@@ -99,8 +102,8 @@ def free_slots(
     )
     busy = sorted(
         (
-            datetime.fromisoformat(b["start"]).astimezone(TZ),
-            datetime.fromisoformat(b["end"]).astimezone(TZ),
+            datetime.fromisoformat(b["start"]).astimezone(tz),
+            datetime.fromisoformat(b["end"]).astimezone(tz),
         )
         for b in resp["calendars"][_CALENDAR_ID]["busy"]
     )
@@ -139,6 +142,7 @@ def create_event(
     title: str,
     description: str,
     gmail_message_id: str,
+    tz_name: str = DEFAULT_TIMEZONE,
     actor: str = "agent",
 ) -> EventResult:
     """Create a marker-tagged event holding the source email's context. Raises
@@ -164,8 +168,8 @@ def create_event(
     body = {
         "summary": title,
         "description": description,
-        "start": {"dateTime": start_local.isoformat(), "timeZone": ZONE_NAME},
-        "end": {"dateTime": end_local.isoformat(), "timeZone": ZONE_NAME},
+        "start": {"dateTime": start_local.isoformat(), "timeZone": tz_name},
+        "end": {"dateTime": end_local.isoformat(), "timeZone": tz_name},
         "extendedProperties": {
             "private": {MARKER_KEY: MARKER_VALUE, SOURCE_KEY: gmail_message_id}
         },
@@ -207,6 +211,7 @@ def move_event(
     event_id: str,
     start: str,
     *,
+    tz_name: str = DEFAULT_TIMEZONE,
     actor: str = "agent",
 ) -> EventResult:
     """Move an agent-created event to a new start, preserving its duration.
@@ -225,8 +230,8 @@ def move_event(
     _record_intended(conn, action_id, "calendar_move", actor, run_id, None, detail)
 
     body = {
-        "start": {"dateTime": new_start_local.isoformat(), "timeZone": ZONE_NAME},
-        "end": {"dateTime": new_end_local.isoformat(), "timeZone": ZONE_NAME},
+        "start": {"dateTime": new_start_local.isoformat(), "timeZone": tz_name},
+        "end": {"dateTime": new_end_local.isoformat(), "timeZone": tz_name},
     }
     try:
         svc.events().patch(
@@ -324,14 +329,11 @@ def _get_own_event(svc: Resource, event_id: str) -> dict:
 
 
 def _parse_local(iso: str) -> datetime:
-    """Parse a naive ISO timestamp as Pacific wall-clock. Rejects an
-    offset-aware input loudly — silently assuming UTC would book the wrong
-    wall-clock time."""
+    """Parse a naive ISO timestamp as local wall-clock. Rejects an offset-aware
+    input loudly — silently assuming UTC would book the wrong wall-clock time."""
     dt = datetime.fromisoformat(iso)
     if dt.tzinfo is not None:
-        raise ValueError(
-            f"expected a naive local (Pacific) timestamp, got offset-aware: {iso!r}"
-        )
+        raise ValueError(f"expected a naive local timestamp, got offset-aware: {iso!r}")
     return dt
 
 

@@ -657,7 +657,9 @@ def cmd_calendar_slots(args: argparse.Namespace) -> int:
     try:
         creds = gmail.get_credentials(cfg)
         svc = calendar.calendar_service(creds)
-        gaps = calendar.free_slots(svc, args.after, args.before, args.duration)
+        gaps = calendar.free_slots(
+            svc, args.after, args.before, args.duration, tz_name=cfg.calendar_timezone
+        )
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 1
@@ -696,6 +698,7 @@ def cmd_calendar_create(args: argparse.Namespace) -> int:
             title=args.title,
             description=description,
             gmail_message_id=args.gmail_message_id,
+            tz_name=cfg.calendar_timezone,
         )
     except ValueError as e:
         print(str(e), file=sys.stderr)
@@ -721,7 +724,9 @@ def cmd_calendar_move(args: argparse.Namespace) -> int:
         creds = gmail.get_credentials(cfg)
         svc = calendar.calendar_service(creds)
         run_id = store.new_id()
-        result = calendar.move_event(conn, svc, run_id, args.event_id, args.start)
+        result = calendar.move_event(
+            conn, svc, run_id, args.event_id, args.start, tz_name=cfg.calendar_timezone
+        )
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 1
@@ -858,10 +863,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "slots", help="free/busy windows on the primary calendar (read-only)"
     )
     p_cal_slots.add_argument(
-        "--after", required=True, help="ISO local (Pacific) timestamp, inclusive"
+        "--after", required=True, help="naive ISO local timestamp, inclusive"
     )
     p_cal_slots.add_argument(
-        "--before", required=True, help="ISO local (Pacific) timestamp, exclusive"
+        "--before", required=True, help="naive ISO local timestamp, exclusive"
     )
     p_cal_slots.add_argument(
         "--duration", required=True, type=int, help="minimum free-gap length, minutes"
@@ -872,7 +877,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "create", help="create a marker-tagged event holding an email's context"
     )
     p_cal_create.add_argument(
-        "--start", required=True, help="ISO local (Pacific) timestamp"
+        "--start",
+        required=True,
+        help="naive ISO local timestamp (config [calendar] timezone)",
     )
     p_cal_create.add_argument(
         "--duration", required=True, type=int, help="event length, minutes"
@@ -891,7 +898,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cal_move = calendar_sub.add_parser("move", help="move an agent-created event")
     p_cal_move.add_argument("event_id")
     p_cal_move.add_argument(
-        "--start", required=True, help="ISO local (Pacific) timestamp"
+        "--start",
+        required=True,
+        help="naive ISO local timestamp (config [calendar] timezone)",
     )
     p_cal_move.set_defaults(func=cmd_calendar_move)
 

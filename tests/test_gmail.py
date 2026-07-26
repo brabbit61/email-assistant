@@ -45,6 +45,7 @@ def _config(tmp_path):
         daily_usd_soft_cap=1.0,
         auto_archive_low_value=False,
         dry_run=True,
+        calendar_timezone="America/Los_Angeles",
         secrets=Secrets("a", "b", "c"),
     )
 

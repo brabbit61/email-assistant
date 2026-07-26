@@ -91,6 +91,8 @@ def test_check_rejects_off_taxonomy():
 def test_cost_usd():
     assert abs(classify.cost_usd(MODEL, 1_000_000, 1_000_000) - 6.0) < 1e-9
     assert abs(classify.cost_usd(MODEL, 1_000_000, 1_000_000, batch=True) - 3.0) < 1e-9
+    # Unknown model warns and books $0 rather than crashing the run.
+    assert classify.cost_usd("claude-does-not-exist", 1000, 1000) == 0.0
 
 
 # --- failure paths ---------------------------------------------------------

@@ -29,11 +29,14 @@ from assistant.config import Config, load
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
-    # Deliberately broad, not the narrower calendar.events.owned +
-    # calendar.freebusy pair — the "own events only" write boundary is
-    # enforced by calendar.py's marker check, not by the OAuth grant itself.
-    # See calendar.py's module docstring.
+    # calendar.events covers event create/move/delete (the "own events only"
+    # write boundary is enforced by calendar.py's marker check, not the OAuth
+    # grant). It does NOT cover freebusy.query, despite covering events().list —
+    # confirmed empirically (a 403 "insufficient authentication scopes" on every
+    # `assistant calendar slots` call). calendar.freebusy is the narrowest scope
+    # that actually grants it. See calendar.py's module docstring.
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.freebusy",
 ]
 
 

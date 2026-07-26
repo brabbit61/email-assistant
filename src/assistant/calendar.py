@@ -17,12 +17,12 @@ and no audit row, if it's missing. `SOURCE_KEY` also carries the originating
 `gmail_message_id`, for the dedupe rule (an email with an existing future
 block isn't re-proposed) — not read here.
 
-The OAuth grant (`calendar.events`, see `gmail.SCOPES`) is broader than this
-boundary needs — Google's narrower `calendar.events.owned` scope would let it
-enforce "own events only" itself, but `free_slots` still needs real busy-time
-visibility across the whole calendar (a second scope, `calendar.freebusy`,
-would be required alongside it). Kept as the single broad scope; this code's
-marker check is the actual enforcement, not the grant.
+OAuth grant (see `gmail.SCOPES`): `calendar.events` for create/move/delete —
+broader than this boundary needs (a narrower `calendar.events.owned` would let
+Google enforce "own events only" itself), but this code's marker check is the
+actual enforcement, not the grant. `free_slots` additionally needs
+`calendar.freebusy`: `calendar.events` does not cover `freebusy.query` even
+though it covers `events().list` — confirmed empirically, not assumed.
 
 Timezone comes from config (`[calendar] timezone`, default America/Los_Angeles):
 `--start`/`--after`/`--before` are naive ISO timestamps interpreted as that

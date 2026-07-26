@@ -52,8 +52,10 @@ You do these once, outside this repo.
    and add your own Google account as a test user (keeps it personal-use, no
    Google review needed). Download the client JSON — you'll save it as
    `secrets/client_secret.json`. The scopes used are `gmail.modify`
-   (read/label/archive/draft — **not** permanent delete) and `calendar.events`
-   (for the calendar time-blocking feature).
+   (read/label/archive/draft — **not** permanent delete), `calendar.events`
+   (create/move/delete time blocks), and `calendar.freebusy` (both are needed
+   for the calendar time-blocking feature — `calendar.events` alone does not
+   cover free/busy slot search).
 2. **Anthropic API key.** Create a key at the [Anthropic Console](https://console.anthropic.com/)
    and set a hard monthly spend cap there. `config.example.toml` also carries an
    informational `monthly_usd_cap`.

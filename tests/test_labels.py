@@ -1,4 +1,4 @@
-"""T1.4 label reconcile: idempotent create, drift-only patch (issue #10)."""
+"""Label reconcile: idempotent create, drift-only patch."""
 
 from assistant import labels
 

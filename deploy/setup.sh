@@ -72,7 +72,7 @@ if command -v hermes >/dev/null 2>&1; then
 	# Matches config.toml's [models] agent — digests/chat need a model that
 	# reliably follows multi-constraint formatting/arithmetic instructions;
 	# Haiku was tried and dropped a lead-in sentence + miscounted digest
-	# totals on live testing (T2.5, #45).
+	# totals on live testing.
 	echo "==> setting hermes's default model to match config.toml's [models] agent"
 	hermes config set model.default claude-sonnet-5 ||
 		echo "warning: could not set model.default"
@@ -91,7 +91,7 @@ if command -v hermes >/dev/null 2>&1; then
 	hermes skills opt-out --remove --yes ||
 		echo "warning: could not opt hermes out of bundled skills"
 
-	# Registers the 3 digest cron jobs from hermes/cron-jobs.md (T2.5, #45).
+	# Registers the 3 digest cron jobs from hermes/cron-jobs.md.
 	# Grep-guarded on job name so re-running never creates duplicates; picked
 	# up live by the gateway's cron ticker on its next tick, no restart needed.
 	if [ -f "$ROOT/secrets/.env" ] && grep -q '^TELEGRAM_CHAT_ID=' "$ROOT/secrets/.env"; then
@@ -110,11 +110,11 @@ if command -v hermes >/dev/null 2>&1; then
 		}
 
 		register_digest "email-digest-morning" "0 7 * * *" \
-			"Compose and send Jenit's MORNING email digest now, following the Digest structure section of your email-assistant skill (morning window: overnight since 20:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
+			"Compose and send the MORNING email digest now, following the Digest structure section of your email-assistant skill (morning window: overnight since 20:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
 		register_digest "email-digest-midday" "0 13 * * *" \
-			"Compose and send Jenit's MIDDAY email digest now, following the Digest structure section of your email-assistant skill (midday window: since 07:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
+			"Compose and send the MIDDAY email digest now, following the Digest structure section of your email-assistant skill (midday window: since 07:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
 		register_digest "email-digest-evening" "0 20 * * *" \
-			"Compose and send Jenit's EVENING email digest now, following the Digest structure section of your email-assistant skill (evening window: since 13:00; end with the running monthly spend line per the skill). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
+			"Compose and send the EVENING email digest now, following the Digest structure section of your email-assistant skill (evening window: since 13:00; end with the running monthly spend line per the skill). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
 
 		echo "note: cron times are host-local (see hermes/cron-jobs.md); pin with 'hermes config set timezone <zone>' if this system's timezone ever changes."
 	else

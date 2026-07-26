@@ -1,4 +1,4 @@
-"""T1.5 poller: incremental ingest, idempotency, 404 catch-up sweep, cold start.
+"""Poller: incremental ingest, idempotency, 404 catch-up sweep, cold start.
 
 Fakes at the `gmail` helper seam (monkeypatch) against a real tmp SQLite — no
 Gmail client, no network. Mirrors test_gmail.py's hand-rolled-fake style.
@@ -121,7 +121,7 @@ def test_expired_historyid_triggers_bounded_sweep(tmp_path, monkeypatch):
 
 
 def test_relabel_events_forwarded_before_checkpoint(tmp_path, monkeypatch):
-    # Flow A (#46): poll_once hands label events to correct.detect_relabels, and
+    # Flow A: poll_once hands label events to correct.detect_relabels, and
     # does so *before* it writes the 'finished' checkpoint row (same crash-safety
     # ordering as message ingest).
     conn = store.open_db(tmp_path / "triage.db")

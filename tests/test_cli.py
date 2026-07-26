@@ -1,4 +1,4 @@
-"""T1.8 CLI: run/status/audit/costs — dispatch, exit codes, output shape.
+"""CLI: run/status/audit/costs — dispatch, exit codes, output shape.
 
 Fakes at the gmail/classify/poll module seams (monkeypatch), like test_poll.py.
 `apply_verdict` runs for real against a hand-rolled fake Gmail service (like
@@ -345,7 +345,7 @@ def test_run_dry_run_records_cost_but_writes_no_gmail_mutations(
 
 def test_config_gate_dries_run_without_the_flag(tmp_path, monkeypatch, capsys):
     """dry_run=true in config suppresses writes even when --dry-run is absent —
-    the go-live gate the unattended timer obeys (T1.11)."""
+    the go-live gate the unattended timer obeys."""
     root = _make_repo(tmp_path, CONFIG_TOML_GATE)
     svc = FakeService()
     _patch_run(
@@ -382,7 +382,7 @@ def test_config_gate_dries_run_without_the_flag(tmp_path, monkeypatch, capsys):
     )
 
 
-# --- operational pings wired through cmd_run (T2.3, #43) ----------------------
+# --- operational pings wired through cmd_run ----------------------
 
 
 def _capture_send(monkeypatch):
@@ -804,7 +804,7 @@ def test_costs_folds_in_hermes_spend(tmp_path, monkeypatch, capsys):
     )
 
 
-# --- open: Gmail-verified still-open (T2.4, #44) ------------------------------
+# --- open: Gmail-verified still-open ------------------------------
 
 
 class FakeThreadsService:
@@ -979,7 +979,7 @@ def test_no_subcommand_prints_help_and_exits_zero(monkeypatch, capsys):
     assert "usage" in capsys.readouterr().out.lower()
 
 
-# --- correct / improvement-loop wiring (#46) ---------------------------------
+# --- correct / improvement-loop wiring ---------------------------------
 
 
 def _seed_classification(conn, mid, category, source):
@@ -1027,7 +1027,7 @@ def test_correct_dispatch_unknown_id_exits_one(tmp_path, monkeypatch, capsys):
     assert "unknown message id" in capsys.readouterr().err
 
 
-# --- create-draft dispatch (#66) ----------------------------------------------
+# --- create-draft dispatch ----------------------------------------------
 
 
 def test_create_draft_dispatch_prints_summary_and_exits_zero(
@@ -1088,7 +1088,7 @@ def test_create_draft_missing_body_file_exits_one(tmp_path, monkeypatch, capsys)
 
 def test_run_leaves_human_unclassified_alone(tmp_path, monkeypatch):
     # The retry loop reclassifies a worker UNCLASSIFIED but never a human one
-    # (Jenit removed the Gmail label — the worker must not fight it, #46 Flow A).
+    # (the user removed the Gmail label — the worker must not fight it, Flow A).
     root = _make_repo(tmp_path)
     svc = FakeService()
     _patch_run(
@@ -1153,7 +1153,7 @@ def test_backfill_estimate_wires_config_gmail_and_prints_result(
 
 
 def test_messages_needing_classification_excludes_backfill_origin(tmp_path):
-    # Regression (#69): a backfilled message whose batch result was expired/
+    # Regression: a backfilled message whose batch result was expired/
     # canceled is left with NO classification row on purpose, so a later
     # backfill page can retry it. Before origin-gating, the live `assistant run`
     # loop mistook that pending row for brand-new mail and reclassified it
@@ -1179,7 +1179,7 @@ def test_messages_needing_classification_excludes_backfill_origin(tmp_path):
 
 
 def test_actionable_rows_excludes_backfill_source(tmp_path):
-    # Source isolation (#69): a backfilled Action-Needed message is labeled in
+    # Source isolation: a backfilled Action-Needed message is labeled in
     # Gmail but must never enter the actionable set feeding open/digests/pings.
     conn = store.open_db(tmp_path / "triage.db")
     for mid, src in (("worker1", "worker"), ("back1", "backfill")):

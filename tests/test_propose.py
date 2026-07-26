@@ -1,4 +1,4 @@
-"""T2.6 on-demand review (#46): `propose.propose` and its mechanical guardrail.
+"""On-demand review: `propose.propose` and its mechanical guardrail.
 
 The git/gh mechanics are faked at the `subprocess.run` seam (records argv, returns
 canned output, creates the worktree dirs so the real file writes land); the Sonnet

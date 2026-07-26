@@ -1,4 +1,4 @@
-# Digest cron jobs (T2.5, #45)
+# Digest cron jobs
 
 Three hermes cron jobs that trigger the agent to compose and send a digest
 per the [skill's Digest structure section](email-assistant/SKILL.md). This
@@ -31,7 +31,7 @@ one.
 Each job is pinned with `--skill email-assistant` (composition never depends
 on routing) and `--workdir <repo root>` (so `uv run assistant open/status/costs`
 resolve against this repo). Prompts are deliberately thin — they name the
-slot and window and defer everything else to the skill, so the T2.6
+slot and window and defer everything else to the skill, so the
 improvement loop only ever has to edit the skill file, not these jobs.
 
 ## Registration commands
@@ -40,21 +40,21 @@ Run from the repo root, with `TELEGRAM_CHAT_ID` from `secrets/.env`:
 
 ```sh
 hermes cron create "0 7 * * *" \
-  "Compose and send Jenit's MORNING email digest now, following the Digest structure section of your email-assistant skill (morning window: overnight since 20:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output." \
+  "Compose and send the MORNING email digest now, following the Digest structure section of your email-assistant skill (morning window: overnight since 20:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output." \
   --name email-digest-morning \
   --deliver "telegram:$TELEGRAM_CHAT_ID" \
   --skill email-assistant \
   --workdir "$ROOT"
 
 hermes cron create "0 13 * * *" \
-  "Compose and send Jenit's MIDDAY email digest now, following the Digest structure section of your email-assistant skill (midday window: since 07:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output." \
+  "Compose and send the MIDDAY email digest now, following the Digest structure section of your email-assistant skill (midday window: since 07:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output." \
   --name email-digest-midday \
   --deliver "telegram:$TELEGRAM_CHAT_ID" \
   --skill email-assistant \
   --workdir "$ROOT"
 
 hermes cron create "0 20 * * *" \
-  "Compose and send Jenit's EVENING email digest now, following the Digest structure section of your email-assistant skill (evening window: since 13:00; end with the running monthly spend line per the skill). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output." \
+  "Compose and send the EVENING email digest now, following the Digest structure section of your email-assistant skill (evening window: since 13:00; end with the running monthly spend line per the skill). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output." \
   --name email-digest-evening \
   --deliver "telegram:$TELEGRAM_CHAT_ID" \
   --skill email-assistant \

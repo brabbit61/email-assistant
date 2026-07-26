@@ -1,5 +1,5 @@
-"""T2.2 Telegram P1 pings: dedupe, burst-collapse, audit-before-write, failure
-isolation from run health (formats/triggers signed off in S2.2, #38).
+"""Telegram P1 pings: dedupe, burst-collapse, audit-before-write, failure
+isolation from run health.
 
 Fakes at the send seam (a plain injected callable, no network) against a real
 tmp SQLite via store.open_db() — mirrors test_apply.py's style.
@@ -129,9 +129,7 @@ def test_burst_collapses_into_one_combined_message(tmp_path):
     assert "3 urgent" in text
     for mid in ("m1", "m2", "m3"):
         assert f"sender-{mid}@example.com" in text
-    assert (
-        "reply with a number" not in text.lower()
-    )  # #42: dropped, worker can't act on it
+    assert "reply with a number" not in text.lower()  # dropped, worker can't act on it
 
     confirmed = conn.execute(
         "SELECT COUNT(*) FROM action_events WHERE action_type='telegram_ping' AND status='confirmed'"
@@ -219,7 +217,7 @@ def test_no_hits_sends_nothing(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM action_events").fetchone()[0] == 0
 
 
-# --- operational pings (T2.3, #43) -------------------------------------------
+# --- operational pings -------------------------------------------
 # A controllable now_iso so dedupe/ordering (which compare recorded_at strings)
 # are deterministic regardless of when the suite runs.
 
@@ -419,7 +417,7 @@ def test_budget_noop_under_cap(tmp_path, monkeypatch):
 
 
 def test_budget_excludes_backfill_spend(tmp_path, monkeypatch):
-    # T3.5 backfill is deliberate one-time spend, never checked against the daily
+    # backfill is deliberate one-time spend, never checked against the daily
     # soft cap: a $25 backfill day must not trip the ping when worker spend is tiny.
     conn = _op_conn(tmp_path)
     day = "2026-07-14"

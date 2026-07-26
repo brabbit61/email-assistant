@@ -1,8 +1,8 @@
-# Agent-Improvement Loop (S2.4, issue #40)
+# Agent-Improvement Loop
 
-How corrections Jenit gives — in chat or by relabeling in Gmail — accumulate and,
-on demand, become reviewable proposals to the rubric and skill file. Nothing
-self-applies; every change lands as a diff Jenit approves.
+How corrections the user gives — in chat or by relabeling in Gmail — accumulate
+and, on demand, become reviewable proposals to the rubric and skill file.
+Nothing self-applies; every change lands as a diff the user approves.
 
 ## The loop
 
@@ -13,7 +13,7 @@ correction ──▶ captured (DB or memory) ──▶ accumulates
                                               ▼
                              draft PR: rubric / skill edits + rationale
                                               ▼
-                         Jenit reviews → merge (= live) / edit / close
+                          user reviews → merge (= live) / edit / close
 ```
 
 Capture is **continuous**; the review→proposal step is **on-demand only** (no
@@ -23,8 +23,8 @@ proposing is when you ask.
 ## Capture — two channels
 
 **1. Classification corrections → the DB** (a human-originated re-classification,
-append-only, distinguishable from model verdicts by a human/source marker — exact
-column is implementation, T2.6). Two flows converge here:
+append-only, distinguishable from model verdicts by the `source` column). Two
+flows converge here:
 
 - **Flow A — you relabel in Gmail.** On its next poll the worker sees the
   message's current Gmail labels no longer match the taxonomy label it applied,
@@ -48,8 +48,8 @@ hermes memory — never `triage.db` on this path. Example:
 **Proposable — the loop's entire blast radius (behavior-steering markdown only):**
 - `rubric.md` — category definitions, tie-breaks, P1 criteria. Live on merge
   (the classifier reads `rubric.md` fresh every call).
-- The skill file's **digest-structure** section (S2.1).
-- The skill file's **conversation-playbook** section (S2.3) — refinements, examples.
+- The skill file's **digest-structure** section.
+- The skill file's **conversation-playbook** section — refinements, examples.
 
 **Immutable — never proposed:**
 - The **hard guardrails** (read-only-except-`correct`/proposal-PR, never send,
@@ -57,7 +57,7 @@ hermes memory — never `triage.db` on this path. Example:
 - The **fixed taxonomy** (11 categories + 3 priorities — enum + CHECK + Gmail
   labels; mechanically immutable).
 - The **architecture** and **any source code** (`.py`).
-- **Config / tunables** (digest times, budget caps, poll interval) — Jenit edits
+- **Config / tunables** (budget caps, model ids) — the owner edits
   `config.toml` directly.
 
 One-sentence rule: *the loop reaches exactly the markdown that steers behavior —
@@ -79,10 +79,10 @@ never code, never config, never the taxonomy, never the guardrails.*
   step** (rubric goes live immediately). Nothing self-merges.
 - **Cost:** one Sonnet call per review, recorded in the cost ledger like any other.
 
-## The agent's two bounded write powers (reconciling with #39)
+## The loop's two bounded write powers
 
-#39 made the agent read-only. This loop grants exactly two explicit, gated
-exceptions — nothing else changes:
+The conversation playbook made the agent read-only by default. This loop
+grants two of its explicit, gated exceptions — nothing else changes:
 
 1. **Apply a correction you gave it** — via `assistant correct` (Flow B).
 2. **Open a proposal PR when you ask** — via `gh`, always a draft you review.
@@ -90,11 +90,3 @@ exceptions — nothing else changes:
 Both are initiated by you, both are visible (a Gmail relabel you can see, a PR you
 approve), neither can self-apply a change to the system. Everything else — reading
 the DB, summarizing, answering questions — stays strictly read-only.
-
-## Implementation notes (for T2.6, not decided here)
-
-- The DB needs a way to mark a classification as human-originated and its source
-  (chat vs Gmail) so the review can find corrections. Exact column/table is T2.6.
-- `assistant correct` is a new CLI verb to build (bridges Flow B).
-- T2.6 shifts from "correction-review **cron**" to an **on-demand** review
-  command / chat trigger — no scheduled job.

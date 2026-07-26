@@ -1,4 +1,4 @@
-"""Fixed-taxonomy classifier + cost recording (T1.6, issue #12).
+"""Fixed-taxonomy classifier + cost recording.
 
 The triage path's only LLM call. Given one email, produce exactly one taxonomy
 category, one priority, and a one-line reasoning via a single Haiku call, with
@@ -9,7 +9,7 @@ INSERT and is rewritten as UNCLASSIFIED, never silently dropped.
 
 `classify()` is a pure function of an `Email` value so it's testable with a fake
 client and reusable by Phase-3 backfill (which sets `batch=True` for the discount).
-Re-attempting an UNCLASSIFIED message on a later run is the run loop's job (T1.7).
+Re-attempting an UNCLASSIFIED message on a later run is the run loop's job.
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ def request_params(model: str, email: Email) -> dict:
     """The `messages.create` (and Batch API request) kwargs for one email. The
     rubric, structured-output schema, and prompt shape live here so the
     synchronous `classify()` and Phase-3 backfill's Batch API path submit
-    byte-identical requests (T3.5, issue #69) — one classifier contract, two
+    byte-identical requests — one classifier contract, two
     transports."""
     prompt = f"From: {email.sender}\nSubject: {email.subject}\n\n{email.body}"
     return {
@@ -146,7 +146,7 @@ def record(
     violation — an off-taxonomy category the schema failed to prevent — rewrite
     the classification as UNCLASSIFIED so the mutation is recorded, not lost.
 
-    `source` tags the classification's origin (T3.5 backfill passes 'backfill'
+    `source` tags the classification's origin ( backfill passes 'backfill'
     so its rows stay out of the actionable set); defaults to 'worker'."""
     now = store.now_iso()
     cur = conn.execute(

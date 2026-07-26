@@ -1,9 +1,9 @@
-"""Gmail label taxonomy: idempotent creation of the fixed taxonomy (T1.4, issue #10).
+"""Gmail label taxonomy: idempotent creation of the fixed taxonomy.
 
-The taxonomy is fixed by design (PLAN.md) — the classifier (#11) may only
+The taxonomy is fixed by design (PLAN.md) — the classifier may only
 choose from `CATEGORIES`, never invent a label. This module owns the one
 taxonomy definition plus the label spec (name, color, visibility) signed off
-by Jenit, and the idempotent `reconcile()` that turns the spec into real
+by the user, and the idempotent `reconcile()` that turns the spec into real
 Gmail labels: `uv run python -m assistant.labels`.
 """
 
@@ -106,8 +106,8 @@ def _matches(existing: dict, spec: LabelSpec) -> bool:
 
 
 def label_ids(svc: Resource) -> dict[str, str]:
-    """Live full_name -> id lookup, no create/patch. The applier (T1.7) calls this
-    at the start of each run; labels are assumed already reconciled (T1.4)."""
+    """Live full_name -> id lookup, no create/patch. The applier calls this
+    at the start of each run; labels are assumed already reconciled."""
     existing = svc.users().labels().list(userId="me").execute().get("labels", [])
     names = {spec.full_name for spec in LABELS}
     return {label["name"]: label["id"] for label in existing if label["name"] in names}

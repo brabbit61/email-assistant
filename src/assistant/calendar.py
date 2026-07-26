@@ -1,20 +1,20 @@
-"""Calendar time-blocking verbs: slots / create / move / delete (T4.2, issue #78).
+"""Calendar time-blocking verbs: slots / create / move / delete.
 
 The CLI seam that lets the hermes agent search free/busy time and create, move,
-or delete calendar events on Jenit's behalf, without the agent ever touching
+or delete calendar events on the user's behalf, without the agent ever touching
 the Calendar API directly. Same audit-before-write contract as `apply.py` /
 `draft.py`: an `intended` `action_events` row before the Calendar API call,
 `confirmed`/`failed` after. No `dry_run` — like `create_draft_reply` and
-`apply_relabel`, these are explicit, Jenit-initiated one-shot actions, not the
+`apply_relabel`, these are explicit, user-initiated one-shot actions, not the
 unattended run the go-live gate protects.
 
-Write boundary (S4.1/#76, decision 7): the agent may move or delete an event
+Write boundary (decision 7): the agent may move or delete an event
 only if this code confirms it created that event, regardless of how the
 request is phrased in chat. Ownership is a private extended property
 (`MARKER_KEY`/`MARKER_VALUE`) written on `create` and checked by `_get_own_event`
 before any mutating `move`/`delete` call — refusing loudly, with no API call
 and no audit row, if it's missing. `SOURCE_KEY` also carries the originating
-`gmail_message_id`, for T4.3's dedupe rule (an email with an existing future
+`gmail_message_id`, for the dedupe rule (an email with an existing future
 block isn't re-proposed) — not read here.
 
 The OAuth grant (`calendar.events`, see `gmail.SCOPES`) is broader than this
@@ -26,12 +26,12 @@ marker check is the actual enforcement, not the grant.
 
 Everything happens in a fixed Pacific timezone: `--start`/`--after`/`--before`
 are naive ISO timestamps interpreted as `America/Los_Angeles` wall-clock (DST-
-aware via stdlib `zoneinfo`), matching S4.1's skill-file working-hours default.
+aware via stdlib `zoneinfo`), matching the skill-file working-hours default.
 An offset-aware input is rejected — silently assuming UTC would book the wrong
 wall-clock time.
 
 `create`'s event description is written verbatim from the caller — the agent
-composes the full S4.1 format (sender, subject, deadline, action, Gmail
+composes the full format (sender, subject, deadline, action, Gmail
 permalink); this module is a dumb writer, same division of labor as
 `draft.py`.
 
@@ -79,7 +79,7 @@ class MoveResult:
 
 
 def calendar_service(creds: Credentials) -> Resource:
-    """Build the Calendar API client. Same token as Gmail (T4.1/#77)."""
+    """Build the Calendar API client. Same token as Gmail."""
     return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
 
@@ -88,7 +88,7 @@ def free_slots(
 ) -> list[tuple[datetime, datetime]]:
     """Maximal free gaps >= duration_minutes within [after, before) on the
     primary calendar, as naive Pacific (start, end) pairs. Not a fixed-grid
-    enumeration — S4.1 keeps slot-selection defaults in the skill file, not
+    enumeration — keeps slot-selection defaults in the skill file, not
     here; the agent picks a start within a returned gap."""
     window_start = _parse_local(after).replace(tzinfo=TZ)
     window_end = _parse_local(before).replace(tzinfo=TZ)

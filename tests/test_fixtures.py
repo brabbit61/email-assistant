@@ -1,4 +1,4 @@
-"""Real-API classifier fixtures (T1.9, #15). Opt-in, paid, majority-vote.
+"""Real-API classifier fixtures. Opt-in, paid, majority-vote.
 
 Runs the *real* classifier against the *real* rubric.md so a prompt/model/parse
 regression fails loudly. Each fixture is called N times; the majority answer must

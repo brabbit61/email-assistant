@@ -1,4 +1,4 @@
-"""T3.4 backfill --estimate: scope filtering, date bounding, cost math.
+"""Backfill --estimate: scope filtering, date bounding, cost math.
 
 Fakes at the `gmail` helper seam (monkeypatch) against a real tmp SQLite —
 mirrors test_poll.py's style.
@@ -152,7 +152,7 @@ def test_format_output_notes_missing_basis():
     assert "basis: PLAN default, no prior classifications yet" in out
 
 
-# --- run path (T3.5): Batch API submit / poll / ingest state machine ----------
+# --- run path: Batch API submit / poll / ingest state machine ----------
 #
 # Fakes the anthropic Batch API surface (create/retrieve/results) and the two
 # gmail seams (list_message_ids, get_message) against a real tmp SQLite. The

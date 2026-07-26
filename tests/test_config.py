@@ -1,4 +1,4 @@
-"""config loader: valid load, fail-loud on missing secrets, no value leaks."""
+"""Config loader: valid load, fail-loud on missing secrets, no value leaks."""
 
 import pytest
 

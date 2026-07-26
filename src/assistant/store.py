@@ -1,4 +1,4 @@
-"""SQLite store: schema, migrations, connection (T1.2, issue #8).
+"""SQLite store: schema, migrations, connection.
 
 The database is **append-only** — every write is an INSERT; no row is ever
 UPDATEd or DELETEd. Lifecycle state (an action's intended→confirmed/failed, a
@@ -129,7 +129,7 @@ _MIGRATIONS: list[str] = [
         WHERE hermes_session_id IS NOT NULL;
     """,
     """
-    -- v3 -> v4: who originated a classification (S2.4/T2.6 improvement loop).
+    -- v3 -> v4: who originated a classification (improvement loop).
     -- 'worker' = the classifier; 'human-chat' = `assistant correct`; 'human-gmail'
     -- = a relabel detected on poll. The review reads rows where source != 'worker'.
     -- `SELECT c.*` in current_classifications carries the column through unchanged.
@@ -137,7 +137,7 @@ _MIGRATIONS: list[str] = [
         CHECK(source IN ('worker','human-chat','human-gmail'));
     """,
     """
-    -- v4 -> v5: Phase-3 backfill (T3.5, issue #69). Two changes:
+    -- v4 -> v5: Phase-3 backfill. Two changes:
     --  (a) run_events gets a typed batch_id column — the in-flight Batch API id
     --      the resumable `backfill --run` re-polls instead of resubmitting (no
     --      double-spend). Mirrors how history_id already types the triage
@@ -180,10 +180,10 @@ _MIGRATIONS: list[str] = [
         );
     """,
     """
-    -- v5 -> v6: messages.origin (T3.5 follow-up). A backfilled message is
+    -- v5 -> v6: messages.origin (follow-up). A backfilled message is
     -- inserted (by _submit_page) before its Batch API result is known, and an
     -- expired/canceled result deliberately leaves no classification row so a
-    -- later page can retry it (#69's locked failure policy). Without a way to
+    -- later page can retry it (the locked failure policy). Without a way to
     -- tell "backfill's, still pending" apart from "genuinely new", the live
     -- `assistant run` loop's classification-row-presence check mistook that
     -- pending row for fresh mail and reclassified it through the live path —
@@ -196,7 +196,7 @@ _MIGRATIONS: list[str] = [
         CHECK(origin IN ('poll','backfill'));
     """,
     """
-    -- v6 -> v7: FTS5 search index over messages (T4.4, issue #80). External-
+    -- v6 -> v7: FTS5 search index over messages. External-
     -- content mode (content='messages') avoids duplicating sender/subject/body
     -- text, but needs a stable INTEGER content_rowid — messages' own PK is TEXT
     -- (gmail_message_id), and its implicit rowid isn't safe to use directly (a

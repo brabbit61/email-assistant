@@ -1,4 +1,4 @@
-# Go-live runbook (T1.11, issue #17)
+# Go-live runbook
 
 The final Phase-1 gate. The triage worker ships **off** — it classifies every new
 email but writes nothing to Gmail — so you can watch it for a few days and only
@@ -38,7 +38,7 @@ uv run assistant costs                        # spend vs the monthly cap
 ```
 
 Read down the list and ask: **is each email labeled the way you would have labeled
-it?** Acceptance bar (from PLAN.md): **≥95% sensible**, and **zero crashes** across the
+it?** Acceptance bar: **≥95% sensible**, and **zero crashes** across the
 trial (`status` stays healthy, error count 0).
 
 ## 3. Go live (requires sign-off)
@@ -65,4 +65,4 @@ labels are harmless and reversible by hand in Gmail. Nothing is ever deleted.
 - [ ] Trial ran ≥2 days on the timer with no crashes (`status` healthy throughout)
 - [ ] `assistant review` spot-check: ≥95% of new mail labeled sensibly
 - [ ] `assistant costs` within expectations (~$1–4/mo ongoing)
-- [ ] **Go-live decision (Jenit):** flip `dry_run = false`
+- [ ] **Go-live decision (you):** flip `dry_run = false`

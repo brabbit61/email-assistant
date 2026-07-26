@@ -1,4 +1,4 @@
-"""T3.2 create-draft (#66): reply-all resolution, threading, quote-back, audit.
+"""Create-draft: reply-all resolution, threading, quote-back, audit.
 
 Hand-rolled fake Gmail service (getProfile, drafts().create) against a real
 tmp SQLite — mirrors test_apply.py / test_correct.py's style. No network.
@@ -10,7 +10,7 @@ import pytest
 
 from assistant import draft, store
 
-MY_EMAIL = "jenit@example.com"
+MY_EMAIL = "alex@example.com"
 
 
 class _Exec:
@@ -81,11 +81,11 @@ def _seed_basic_thread(conn):
         "t1",
         "Alice Smith <alice@example.com>",
         "Project update",
-        "Hi Jenit,\nHere's the update.\nThanks,\nAlice",
+        "Hi Alex,\nHere's the update.\nThanks,\nAlice",
         1721577900000,  # 2024-07-21T15:45:00Z-ish, exact TZ doesn't matter for tests
         headers={
             "Message-ID": "<orig@example.com>",
-            "To": "Jenit Jain <jenit@example.com>, Bob Lee <bob@example.com>",
+            "To": "Alex Doe <alex@example.com>, Bob Lee <bob@example.com>",
             "Cc": "Carol Diaz <carol@example.com>",
         },
     )
@@ -130,7 +130,7 @@ def test_quote_back_includes_composed_text_and_original(tmp_path):
 
     assert "Thanks, will do." in raw
     assert "Alice Smith <alice@example.com> wrote:" in raw
-    assert "> Hi Jenit," in raw
+    assert "> Hi Alex," in raw
     assert "> Here's the update." in raw
 
 
@@ -242,7 +242,7 @@ def test_unknown_thread_raises(tmp_path):
 
 def test_thread_with_only_own_messages_raises(tmp_path):
     conn = _conn(tmp_path)
-    _insert(conn, "m1", "t1", "Jenit Jain <jenit@example.com>", "Fwd", "body", 1)
+    _insert(conn, "m1", "t1", "Alex Doe <alex@example.com>", "Fwd", "body", 1)
     svc = FakeService()
 
     with pytest.raises(ValueError, match="no inbound message"):
@@ -254,9 +254,7 @@ def test_thread_with_only_own_messages_raises(tmp_path):
 def test_latest_inbound_message_picked_over_older_ones(tmp_path):
     conn = _conn(tmp_path)
     _insert(conn, "m1", "t1", "Alice <alice@example.com>", "Hi", "old body", 1000)
-    _insert(
-        conn, "m2", "t1", "Jenit Jain <jenit@example.com>", "Re: Hi", "my reply", 2000
-    )
+    _insert(conn, "m2", "t1", "Alex Doe <alex@example.com>", "Re: Hi", "my reply", 2000)
     _insert(
         conn, "m3", "t1", "Alice <alice@example.com>", "Re: Hi", "newest body", 3000
     )

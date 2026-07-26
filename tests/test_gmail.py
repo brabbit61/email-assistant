@@ -1,4 +1,4 @@
-"""T1.3 Gmail auth: branch selection (valid / refresh / interactive), loud failure, 0600 token."""
+"""Gmail auth: branch selection (valid / refresh / interactive), loud failure, 0600 token."""
 
 import stat
 

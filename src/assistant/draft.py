@@ -1,17 +1,14 @@
-"""Draft-reply: compose + place a Gmail draft (T3.2, issue #66).
+"""Draft-reply: compose + place a Gmail draft.
 
 The agent composes a reply, writes it to a file, and `create_draft_reply` does
 the Gmail-side placement: reply-all (`To` = the latest inbound message's
 sender, `Cc` = that message's To+Cc minus the caller's own address — native
 Gmail Reply-All semantics, derived from the *latest* message only, not the
-whole thread; this diverges from #66's own "reply-to-sender only" text, a
-divergence recorded against #64), proper `In-Reply-To`/`References` +
+whole thread), proper `In-Reply-To`/`References` +
 `threadId` threading, and a Gmail-style quote-back appended below the agent's
 text. Same audit-before-write contract as `apply.py` (`intended` row before
-the `drafts.create` call, `confirmed`/`failed` after); `action_type='draft'`
-matches the ticket's acceptance criteria verbatim (a naming divergence from
-the `label_add`/`label_remove` convention, also noted against #64). No
-`dry_run` — like `apply_relabel`, this is an explicit, Jenit-initiated action.
+the `drafts.create` call, `confirmed`/`failed` after); `action_type='draft'`.
+No `dry_run` — like `apply_relabel`, this is an explicit, user-initiated action.
 
 Resolution is DB-only: the reply target is the latest `messages` row in the
 thread whose sender isn't the caller, and every header needed (Message-ID,

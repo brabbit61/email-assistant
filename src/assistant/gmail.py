@@ -1,4 +1,4 @@
-"""Gmail OAuth: first-run authorization, token persistence, silent refresh (T1.3, issue #9).
+"""Gmail OAuth: first-run authorization, token persistence, silent refresh.
 
 One durable credential drives the worker for months. `get_credentials()` is the
 only entry point callers need:
@@ -53,7 +53,7 @@ def iter_history(
     """New INBOX message ids since start_id, label-change events, and the latest historyId.
 
     Label events are `(message_id, frozenset(label ids added or removed))` — Flow A
-    (issue #46) reads these to spot a human relabel of already-triaged mail. We drop the
+    reads these to spot a human relabel of already-triaged mail. We drop the
     server-side `labelId="INBOX"` filter (it would hide relabels on archived mail) and
     filter `messagesAdded` to INBOX client-side instead, using the record's own labelIds.
 
@@ -120,7 +120,7 @@ def list_message_ids(svc: Resource, q: str) -> list[str]:
 
 def message_labels(svc: Resource, msg_id: str) -> list[str]:
     """A message's current Gmail label ids, via a cheap `format='minimal'` get.
-    The authoritative present state for a correction (issue #46), independent of the
+    The authoritative present state for a correction, independent of the
     possibly-stale label snapshot in a history event or the `messages` table."""
     msg = svc.users().messages().get(userId="me", id=msg_id, format="minimal").execute()
     return msg.get("labelIds", [])
@@ -246,7 +246,7 @@ def main() -> int:
 
 
 def _record_auth_failure(config: Config, message: str) -> None:
-    """Append a loud, durable failure event (append-only run_events, per T1.2)."""
+    """Append a loud, durable failure event (append-only run_events)."""
     from assistant import (
         store,
     )  # local import: auth doesn't need the DB on the happy path

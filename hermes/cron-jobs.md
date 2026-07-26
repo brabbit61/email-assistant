@@ -25,8 +25,8 @@ it explicitly.
 | `email-digest-midday` | `0 13 * * *` (13:00) | since 07:00 | staleness lead if checkpoint > 60 min old |
 | `email-digest-evening` | `0 20 * * *` (20:00) | since 13:00 | ends with running monthly spend |
 
-Times mirror `config.toml [digest] times` — keep both in sync if you change
-one.
+This file is the single source for the digest schedule; `deploy/setup.sh`
+registers exactly these times.
 
 Each job is pinned with `--skill email-assistant` (composition never depends
 on routing) and `--workdir <repo root>` (so `uv run assistant open/status/costs`

@@ -154,8 +154,8 @@ Timestamps are ISO-8601 UTC text (`YYYY-MM-DDTHH:MM:SSZ`), string-sortable.
 
 *(This section is what the improvement loop diffs against.)*
 
-Three digests daily at the times in `config.toml [digest] times` (07:00 /
-13:00 / 20:00). Cumulative standing state, not deltas-only: what still needs
+Three digests daily at 07:00 / 13:00 / 20:00 (the hermes cron schedule set by
+`deploy/setup.sh`). Cumulative standing state, not deltas-only: what still needs
 the user right now, plus a "new since last digest" count for volume. The
 "still needs you" list comes from `assistant open` — never hand-roll the
 Gmail cross-check.

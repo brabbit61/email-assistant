@@ -92,7 +92,7 @@ cannot_propose instead:
 - the hard guardrails (draft-never-send, never delete, never click links, read-only DB),
 - the fixed taxonomy (the 11 categories and 3 priorities),
 - the architecture or any source code,
-- config / tunables (digest times, budget caps, poll interval)."""
+- config / tunables (budget caps, model ids)."""
 
 
 def propose(

@@ -47,11 +47,7 @@ class LabelSpec:
     bg: str
     text: str
     list_visibility: str  # "labelShow" | "labelShowIfUnread"
-    leaf: str  # emoji + name, e.g. "⚡ Action-Needed"
-
-    @property
-    def full_name(self) -> str:
-        return self.leaf
+    full_name: str  # emoji + name, e.g. "⚡ Action-Needed"
 
 
 def _specs(
@@ -63,7 +59,7 @@ def _specs(
             bg=bg,
             text=text,
             list_visibility=list_visibility,
-            leaf=f"{emoji} {key}",
+            full_name=f"{emoji} {key}",
         )
         for key, emoji, bg, text in rows
     ]

@@ -65,16 +65,9 @@ _CALENDAR_ID = "primary"
 
 
 @dataclass
-class CreateResult:
+class EventResult:
     event_id: str
-    start: str  # naive Pacific ISO
-    end: str
-
-
-@dataclass
-class MoveResult:
-    event_id: str
-    start: str  # naive Pacific ISO
+    start: str  # naive local ISO
     end: str
 
 
@@ -147,7 +140,7 @@ def create_event(
     description: str,
     gmail_message_id: str,
     actor: str = "agent",
-) -> CreateResult:
+) -> EventResult:
     """Create a marker-tagged event holding the source email's context. Raises
     ValueError before any Calendar call or audit write if gmail_message_id is
     unknown (never polled) — mirrors correct.py's preflight."""
@@ -204,7 +197,7 @@ def create_event(
         "confirmed",
         None,
     )
-    return CreateResult(event["id"], start_local.isoformat(), end_local.isoformat())
+    return EventResult(event["id"], start_local.isoformat(), end_local.isoformat())
 
 
 def move_event(
@@ -215,7 +208,7 @@ def move_event(
     start: str,
     *,
     actor: str = "agent",
-) -> MoveResult:
+) -> EventResult:
     """Move an agent-created event to a new start, preserving its duration.
     Raises ValueError (no API call, no audit row) if the event isn't
     marker-tagged or can't be read."""
@@ -264,7 +257,7 @@ def move_event(
         "confirmed",
         None,
     )
-    return MoveResult(event_id, new_start_local.isoformat(), new_end_local.isoformat())
+    return EventResult(event_id, new_start_local.isoformat(), new_end_local.isoformat())
 
 
 def delete_event(

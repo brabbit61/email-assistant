@@ -89,24 +89,9 @@ def iter_history(
             return ids, label_events, latest
 
 
-def list_messages_since(svc: Resource, epoch_s: int) -> list[str]:
-    """INBOX message ids received at/after epoch_s. The bounded 404-recovery sweep."""
-    api = svc.users().messages()
-    ids: list[str] = []
-    page_token = None
-    while True:
-        resp = api.list(
-            userId="me", q=f"in:inbox after:{epoch_s}", pageToken=page_token
-        ).execute()
-        ids.extend(m["id"] for m in resp.get("messages", []))
-        page_token = resp.get("nextPageToken")
-        if not page_token:
-            return ids
-
-
 def list_message_ids(svc: Resource, q: str) -> list[str]:
-    """Message ids matching an arbitrary Gmail search query, e.g. the backfill
-    scope query. Same pagination shape as `list_messages_since`."""
+    """Message ids matching an arbitrary Gmail search query — the backfill scope
+    query, and the bounded `in:inbox after:<epoch>` 404-recovery sweep."""
     api = svc.users().messages()
     ids: list[str] = []
     page_token = None

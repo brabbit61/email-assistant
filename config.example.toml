@@ -3,9 +3,10 @@
 # config.toml is gitignored, so your live values never get committed.
 # Secrets (API keys, tokens) live in secrets/.env — never here.
 
+# The hermes chat agent's model is set separately by deploy/setup.sh
+# (`hermes config set model.default ...`); it is not read from here.
 [models]
 classifier = "claude-haiku-4-5-20251001" # per-email triage
-agent = "claude-sonnet-5"                # hermes digests / chat / drafting
 reviewer = "claude-sonnet-5"             # improvement-loop correction review
 
 [budget]
@@ -13,7 +14,6 @@ monthly_usd_cap = 15.00   # informational — also set a hard cap in the Anthrop
 daily_usd_soft_cap = 0.75 # worker-enforced soft cap
 
 [triage]
-poll_interval_minutes = 5
 # SAFE DEFAULT: classify every new email but never write a label to Gmail.
 # Watch it for a few days (`assistant review`), then flip to false to go live.
 # Full procedure: deploy/go-live.md.
@@ -28,5 +28,5 @@ auto_archive_low_value = false
 # (e.g. "America/New_York", "Europe/London", "Asia/Kolkata").
 timezone = "America/Los_Angeles"
 
-[digest]
-times = ["07:00", "13:00", "20:00"] # hermes digest schedule (host-local time)
+# The digest schedule (07:00 / 13:00 / 20:00) is registered as hermes cron jobs
+# by deploy/setup.sh — see hermes/cron-jobs.md to change it.

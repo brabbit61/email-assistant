@@ -99,12 +99,12 @@ def test_expired_historyid_triggers_bounded_sweep(tmp_path, monkeypatch):
 
     seen_since = {}
 
-    def _sweep(svc, epoch_s):
-        seen_since["epoch"] = epoch_s
+    def _sweep(svc, q):
+        seen_since["query"] = q
         return ["m9"]
 
     monkeypatch.setattr(gmail, "iter_history", _raise_404)
-    monkeypatch.setattr(gmail, "list_messages_since", _sweep)
+    monkeypatch.setattr(gmail, "list_message_ids", _sweep)
     monkeypatch.setattr(gmail, "current_history_id", lambda svc: "300")
     monkeypatch.setattr(gmail, "get_message", lambda svc, mid: _msg(mid))
 
@@ -112,7 +112,7 @@ def test_expired_historyid_triggers_bounded_sweep(tmp_path, monkeypatch):
 
     assert result.catchup is True
     assert result.inserted == 1
-    assert seen_since["epoch"] == 1782864000  # 2026-07-01T00:00:00Z in Unix seconds
+    assert seen_since["query"] == "in:inbox after:1782864000"  # 2026-07-01T00:00:00Z
     assert _checkpoint(conn) == "300"  # fresh bootstrap id after the sweep
     gap = conn.execute(
         "SELECT COUNT(*) FROM run_events WHERE phase='catchup' AND status='gap'"
@@ -160,7 +160,7 @@ def test_catchup_forwards_no_relabel_events(tmp_path, monkeypatch):
         raise HttpError(FakeResp(404), b"{}")
 
     monkeypatch.setattr(gmail, "iter_history", _raise_404)
-    monkeypatch.setattr(gmail, "list_messages_since", lambda svc, e: [])
+    monkeypatch.setattr(gmail, "list_message_ids", lambda svc, q: [])
     monkeypatch.setattr(gmail, "current_history_id", lambda svc: "300")
     seen = {}
 

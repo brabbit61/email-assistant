@@ -88,7 +88,7 @@ def poll_once(conn: sqlite3.Connection, svc: Resource) -> RunResult:
                 ),
             )
             conn.commit()
-            ids = gmail.list_messages_since(svc, since)
+            ids = gmail.list_message_ids(svc, f"in:inbox after:{since}")
             new_history_id = gmail.current_history_id(svc)
 
     inserted = 0

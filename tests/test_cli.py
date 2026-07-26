@@ -32,7 +32,6 @@ ALL_LABEL_NAMES = list(FULL_NAME.values())
 CONFIG_TOML = """\
 [models]
 classifier = "claude-haiku-4-5-20251001"
-agent = "claude-sonnet-5"
 reviewer = "claude-sonnet-5"
 
 [budget]
@@ -40,11 +39,7 @@ monthly_usd_cap = 15.0
 daily_usd_soft_cap = 0.75
 
 [triage]
-poll_interval_minutes = 5
 dry_run = false
-
-[digest]
-times = ["07:00", "13:00", "20:00"]
 """
 
 # Same, but the go-live gate still closed (dry-run trial mode).

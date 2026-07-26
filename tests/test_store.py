@@ -39,10 +39,10 @@ def test_pragmas_set(tmp_path):
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
-def test_migration_is_idempotent(tmp_path):
+def test_open_db_is_idempotent(tmp_path):
     db = tmp_path / "triage.db"
     open_db(db).close()
-    conn = open_db(db)  # second open must not re-run or error
+    conn = open_db(db)  # second open on an already-current DB is a no-op, no error
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 

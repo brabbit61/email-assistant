@@ -8,7 +8,7 @@ the *persistence* guarantee — an off-taxonomy value that slips through raises 
 INSERT and is rewritten as UNCLASSIFIED, never silently dropped.
 
 `classify()` is a pure function of an `Email` value so it's testable with a fake
-client and reusable by Phase-3 backfill (which sets `batch=True` for the discount).
+client and reusable by the backfill command (which sets `batch=True` for the discount).
 Re-attempting an UNCLASSIFIED message on a later run is the run loop's job.
 """
 
@@ -103,7 +103,7 @@ def make_client(api_key: str) -> anthropic.Anthropic:
 def request_params(model: str, email: Email) -> dict:
     """The `messages.create` (and Batch API request) kwargs for one email. The
     rubric, structured-output schema, and prompt shape live here so the
-    synchronous `classify()` and Phase-3 backfill's Batch API path submit
+    synchronous `classify()` and the backfill Batch API path submit
     byte-identical requests — one classifier contract, two
     transports."""
     prompt = (

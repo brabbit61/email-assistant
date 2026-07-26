@@ -133,7 +133,7 @@ def get_message(svc: Resource, msg_id: str) -> dict:
 def _decode_body(payload: dict) -> str | None:
     """Walk the MIME tree; prefer text/plain, fall back to text/html. Decoded UTF-8.
 
-    ponytail: no HTML tag-strip / is_html flag yet — add in Phase 2 if the agent's
+    ponytail: no HTML tag-strip / is_html flag yet — add later if the agent's
     rendering needs it.
     """
     plain = _find_part(payload, "text/plain")
@@ -217,7 +217,7 @@ def main() -> int:
 
     First run opens browser consent; later runs just confirm/refresh. On permanent
     failure, records a loud auth error in the DB and exits nonzero (visible via
-    `assistant status`; Telegram alerting arrives in Phase 2).
+    `assistant status`; the unattended worker also sends an OAuth-death ping).
     """
     config = load()
     try:

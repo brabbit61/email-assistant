@@ -1,4 +1,4 @@
-# CI requirements + use cases: issue #6 comments. Same commands as local dev — no CI-only drift.
+# CI: the same commands as local dev — no CI-only drift.
 name: CI
 
 on:

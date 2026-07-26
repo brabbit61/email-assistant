@@ -18,7 +18,7 @@ worker's own pre-existing backlog rather than all-mail history — shared by bot
 `source='backfill'` so they never reach the actionable set (digests/pings/`open`).
 The token/cost projection uses the real average from past `classify` calls in
 `llm_calls` (self-calibrating to this mailbox and the current rubric) so the
-estimate isn't a guess; a PLAN.md constant is the fallback only before any
+estimate isn't a guess; a built-in constant is the fallback only before any
 classification has ever run.
 """
 
@@ -39,8 +39,8 @@ from assistant.classify import (
     verdict_from_message,
 )
 
-# ponytail: PLAN.md's rough per-email average, used only until llm_calls has
-# real classify rows to average — bump if the rubric/typical email size shifts.
+# ponytail: a rough per-email average, used only until llm_calls has real
+# classify rows to average — bump if the rubric/typical email size shifts.
 DEFAULT_AVG_INPUT_TOKENS = 1500
 DEFAULT_AVG_OUTPUT_TOKENS = 50
 

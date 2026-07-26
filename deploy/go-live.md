@@ -1,6 +1,6 @@
 # Go-live runbook
 
-The final Phase-1 gate. The triage worker ships **off** — it classifies every new
+The go-live gate. The triage worker ships **off** — it classifies every new
 email but writes nothing to Gmail — so you can watch it for a few days and only
 then decide to let it label for real.
 

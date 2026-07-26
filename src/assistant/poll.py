@@ -10,7 +10,7 @@ loses mail: the next run re-lists the same window and the message PK dedups.
 
 Three regimes:
 - **Cold start** (no checkpoint): bootstrap forward from the mailbox's current
-  historyId. Pre-existing mail is Phase-3 backfill's job, not the poller's.
+  historyId. Pre-existing mail is the backfill command's job, not the poller's.
 - **Normal wake**: history.list since the checkpoint, draining all pages.
 - **Long outage** (checkpoint historyId expired → 404): a bounded messages.list
   sweep from the last checkpoint time, recorded as a loud catch-up gap event.

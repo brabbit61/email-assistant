@@ -1,6 +1,6 @@
 """Gmail label taxonomy: idempotent creation of the fixed taxonomy.
 
-The taxonomy is fixed by design (PLAN.md) — the classifier may only
+The taxonomy is fixed by design — the classifier may only
 choose from `CATEGORIES`, never invent a label. This module owns the one
 taxonomy definition plus the label spec (name, color, visibility) signed off
 by the user, and the idempotent `reconcile()` that turns the spec into real

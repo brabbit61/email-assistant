@@ -59,11 +59,10 @@ def _already_notified(conn: sqlite3.Connection, gmail_message_id: str) -> bool:
 
 
 def _compose(fresh: list[tuple[str, sqlite3.Row, Verdict]]) -> str:
-    """P1 mockups per, minus the two Phase-2 gaps: the draft-link line
-    (Phase 2 has no drafting — the grounding rule omits rather than
-    fabricates) and the burst's "reply with a number to open" line (the
-    worker never receives replies — that's the hermes gateway, — and no
-    Phase-2 intent resolves a bare numeric reference; see decisions)."""
+    """Render the P1 ping text. Two deliberate omissions: no draft-link line
+    (the worker doesn't draft — the grounding rule omits rather than fabricates)
+    and no "reply with a number to open" line (the worker only sends; it never
+    receives replies — that's the hermes gateway's job)."""
     if len(fresh) == 1:
         _, row, verdict = fresh[0]
         return f"🔴 Urgent — {row['sender']} — {row['subject']} \n{verdict.reasoning}"

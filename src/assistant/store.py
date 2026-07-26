@@ -137,7 +137,7 @@ _MIGRATIONS: list[str] = [
         CHECK(source IN ('worker','human-chat','human-gmail'));
     """,
     """
-    -- v4 -> v5: Phase-3 backfill. Two changes:
+    -- v4 -> v5: historical backfill support. Two changes:
     --  (a) run_events gets a typed batch_id column — the in-flight Batch API id
     --      the resumable `backfill --run` re-polls instead of resubmitting (no
     --      double-spend). Mirrors how history_id already types the triage

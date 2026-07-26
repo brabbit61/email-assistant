@@ -2,12 +2,30 @@
 name = "email-assistant"
 version = "0.1.0"
 description = "Self-hosted Gmail triage: a deterministic AI labeling worker plus a guardrailed Telegram chat agent"
+readme = "README.md"
 requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Jenit Jain" }]
+keywords = ["gmail", "email", "triage", "llm", "anthropic", "claude", "automation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Email",
+    "Topic :: Office/Business",
+]
 dependencies = [
     "google-api-python-client",
     "google-auth-oauthlib",
     "anthropic",
 ]
+
+[project.urls]
+Homepage = "https://github.com/brabbit61/email-assistant"
+Repository = "https://github.com/brabbit61/email-assistant"
+Issues = "https://github.com/brabbit61/email-assistant/issues"
 
 [project.scripts]
 assistant = "assistant.cli:main"

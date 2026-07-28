@@ -177,6 +177,83 @@ def test_create_writes_marker_and_audit_pair(tmp_path):
     ]
 
 
+def test_create_with_end_and_location(tmp_path):
+    """The email stated a literal window and a room — both land on the event."""
+    conn = _fresh_conn(tmp_path)
+    svc = FakeService()
+
+    result = calendar.create_event(
+        conn,
+        svc,
+        "run1",
+        start="2026-07-28T14:00:00",
+        end="2026-07-28T15:30:00",
+        title="Test",
+        description="desc text",
+        gmail_message_id="msg1",
+        location="Room 302",
+    )
+
+    assert result.end == "2026-07-28T15:30:00"
+    body = [c for c in svc.calls if c[0] == "events.insert"][0][1]
+    assert body["end"]["dateTime"] == "2026-07-28T15:30:00"
+    assert body["location"] == "Room 302"
+
+    rows = conn.execute(
+        "SELECT status, detail FROM action_events ORDER BY event_id"
+    ).fetchall()
+    assert [r["status"] for r in rows] == ["intended", "confirmed"]
+    assert "location=Room 302" in rows[0]["detail"]
+
+
+def test_create_omits_location_when_absent(tmp_path):
+    conn = _fresh_conn(tmp_path)
+    svc = FakeService()
+
+    calendar.create_event(
+        conn,
+        svc,
+        "run1",
+        start="2026-07-28T18:00:00",
+        duration_minutes=15,
+        title="Test",
+        description="desc",
+        gmail_message_id="msg1",
+    )
+
+    body = [c for c in svc.calls if c[0] == "events.insert"][0][1]
+    assert "location" not in body
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},  # neither duration nor end
+        {"duration_minutes": 15, "end": "2026-07-28T18:15:00"},  # both
+        {"end": "2026-07-28T17:00:00"},  # end before start
+        {"duration_minutes": 0},  # zero-length
+    ],
+)
+def test_create_rejects_bad_time_window(tmp_path, kwargs):
+    conn = _fresh_conn(tmp_path)
+    svc = FakeService()
+
+    with pytest.raises(ValueError):
+        calendar.create_event(
+            conn,
+            svc,
+            "run1",
+            start="2026-07-28T18:00:00",
+            title="Test",
+            description="desc",
+            gmail_message_id="msg1",
+            **kwargs,
+        )
+
+    assert svc.calls == []
+    assert conn.execute("SELECT COUNT(*) FROM action_events").fetchone()[0] == 0
+
+
 def test_create_unknown_message_id_raises_before_any_write(tmp_path):
     conn = _fresh_conn(tmp_path)
     svc = FakeService()

@@ -30,9 +30,13 @@ zone's wall-clock (DST-aware via stdlib `zoneinfo`). An offset-aware input is
 rejected — silently assuming UTC would book the wrong wall-clock time.
 
 `create`'s event description is written verbatim from the caller — the agent
-composes the full format (sender, subject, deadline, action, Gmail
-permalink); this module is a dumb writer, same division of labor as
-`draft.py`.
+composes the whole thing (a short briefing on what to do in the slot, plus
+sender, subject, deadline, Gmail permalink; never the email body itself, see
+the skill's intent-11 section); this module is a dumb writer, same division of labor as
+`draft.py`. The optional fields (`location`, and an explicit `end` in place of
+`duration_minutes`) arrive on the same terms: the agent reads the email and
+passes what it found, and an omitted field is left off the event body entirely
+rather than written empty. No parsing happens here.
 
 ponytail: `events.insert` isn't idempotent like Gmail's `modify` or
 `drafts.create` — a crash between the API call and the `confirmed` row can
@@ -138,29 +142,45 @@ def create_event(
     run_id: str,
     *,
     start: str,
-    duration_minutes: int,
+    duration_minutes: int | None = None,
+    end: str | None = None,
     title: str,
     description: str,
     gmail_message_id: str,
+    location: str | None = None,
     tz_name: str = DEFAULT_TIMEZONE,
     actor: str = "agent",
 ) -> EventResult:
-    """Create a marker-tagged event holding the source email's context. Raises
-    ValueError before any Calendar call or audit write if gmail_message_id is
-    unknown (never polled) — mirrors correct.py's preflight."""
+    """Create a marker-tagged event holding the source email's context. The end
+    comes from either `duration_minutes` or an explicit `end` timestamp (exactly
+    one) — an email stating a literal window doesn't have to be back-computed
+    into minutes. Raises ValueError before any Calendar call or audit write if
+    gmail_message_id is unknown (never polled) or the time window is
+    unusable — mirrors correct.py's preflight."""
     known = conn.execute(
         "SELECT 1 FROM messages WHERE gmail_message_id = ?", (gmail_message_id,)
     ).fetchone()
     if known is None:
         raise ValueError(f"unknown message id: {gmail_message_id}")
+    if (duration_minutes is None) == (end is None):
+        raise ValueError("pass exactly one of duration_minutes / end")
 
     start_local = _parse_local(start)
-    end_local = start_local + timedelta(minutes=duration_minutes)
+    end_local = (
+        _parse_local(end) if end else start_local + timedelta(minutes=duration_minutes)
+    )
+    if end_local <= start_local:
+        raise ValueError(
+            f"event ends at or before it starts: {start_local.isoformat()} -> "
+            f"{end_local.isoformat()}"
+        )
 
     action_id = store.new_id()
     detail = (
-        f"start={start_local.isoformat()}; duration={duration_minutes}m; title={title}"
+        f"start={start_local.isoformat()}; end={end_local.isoformat()}; title={title}"
     )
+    if location:
+        detail += f"; location={location}"
     _record_intended(
         conn, action_id, "calendar_create", actor, run_id, gmail_message_id, detail
     )
@@ -174,6 +194,8 @@ def create_event(
             "private": {MARKER_KEY: MARKER_VALUE, SOURCE_KEY: gmail_message_id}
         },
     }
+    if location:
+        body["location"] = location
     try:
         event = svc.events().insert(calendarId=_CALENDAR_ID, body=body).execute()
     except Exception as e:

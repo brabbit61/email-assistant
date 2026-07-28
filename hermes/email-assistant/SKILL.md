@@ -72,7 +72,7 @@ Gmail API for anything these commands already give you.
 | `assistant propose [--since ISO] [--notes "…"]` | review corrections since the last run (intent 9): opens a draft PR if a recurring pattern warrants a rubric/skill edit, else reports "no pattern". Pass your dated style notes via `--notes` |
 | `assistant create-draft <thread_id> --body-file <path>` | places a reply-all draft (intent 10): you compose the text, write it to a temp file, then call this. Reply-all recipients, threading, and the quote-back are automatic — you only supply the body |
 | `assistant calendar slots --after ISO --before ISO --duration MIN` | free/busy windows on the primary calendar (intent 11), read-only — no audit row |
-| `assistant calendar create --start ISO --duration MIN --title STR --description-file PATH --gmail-message-id ID` | books a marker-tagged event holding the source email's context (intent 11) |
+| `assistant calendar create --start ISO (--duration MIN \| --end ISO) --title STR --description-file PATH --gmail-message-id ID [--location STR]` | books a marker-tagged event holding the source email's context (intent 11); `--location` and `--end` are populated from the email when it states them |
 | `assistant calendar move <event_id> --start ISO` | moves an event you created, preserving its duration; refuses on any event lacking your marker |
 | `assistant calendar delete <event_id>` | deletes an event you created; refuses on any event lacking your marker |
 | `assistant run [--dry-run]` | the worker's own command — you never call this |
@@ -428,9 +428,46 @@ offer to reschedule next conversation — no unprompted nag. "Done" is the
 Digest structure section's Gmail-verified still-open definition: the email
 clearing (reply/archive) retires it, not the event firing.
 
-Event content: title is a short imperative task derived from the email;
-description holds sender, subject, deadline, a one-line what-to-do, and the
-Gmail permalink.
+Event content: title is a short imperative task derived from the email.
+
+The description is a **briefing for the user at the moment the block starts** —
+what they're doing in this slot and what finishing looks like. Never paste or
+quote the email body: they already have the email, and the permalink is right
+there if they want it. Write it fresh, in this shape:
+
+```
+<1–2 sentences: the concrete thing to do in this slot, and what "done" means
+when the time is up. Lead with the verb.>
+
+Needs: <anything to have to hand — an account number, the attached form, a
+figure to look up>          ← drop this line when there's nothing
+Deadline: <date>            ← drop when the email states none
+From: <sender> — "<subject>"
+<Gmail permalink>
+```
+
+Keep the prose under ~100 words. Summarize, but lift a detail in verbatim when
+it can't survive paraphrase (a confirmation code, an amount, a policy number) —
+the test is that the block is actionable *without* opening the email, not that
+it's short. Anyone else the email involves is named here in the text; you don't
+add attendees.
+
+Example description for "Fill out: Acme HR benefits enrollment":
+
+```
+Choose 2026 medical + dental tier and submit the enrollment form. Done when
+the confirmation page shows "Elections received."
+
+Needs: employee ID 44812, the HSA contribution figure from last year
+Deadline: Mon Aug 3
+From: Acme HR <benefits@acme.com> — "Action required: 2026 open enrollment"
+https://mail.google.com/mail/u/0/#inbox/199a2f...
+```
+
+Pass `--location` when the email names a venue, address, or meeting URL, and
+`--end` instead of `--duration` when the email states a literal window
+("2:00–3:30") rather than an effort you estimated. Omit either flag when the
+email doesn't say — never invent a location or a window.
 
 ```
 U: block time for my open action items

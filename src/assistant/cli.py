@@ -695,9 +695,11 @@ def cmd_calendar_create(args: argparse.Namespace) -> int:
             run_id,
             start=args.start,
             duration_minutes=args.duration,
+            end=args.end,
             title=args.title,
             description=description,
             gmail_message_id=args.gmail_message_id,
+            location=args.location,
             tz_name=cfg.calendar_timezone,
         )
     except ValueError as e:
@@ -881,10 +883,19 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="naive ISO local timestamp (config [calendar] timezone)",
     )
-    p_cal_create.add_argument(
-        "--duration", required=True, type=int, help="event length, minutes"
+    length = p_cal_create.add_mutually_exclusive_group(required=True)
+    length.add_argument("--duration", type=int, help="event length, minutes")
+    length.add_argument(
+        "--end",
+        default=None,
+        help="naive ISO local timestamp — the email's literal end, instead of --duration",
     )
     p_cal_create.add_argument("--title", required=True)
+    p_cal_create.add_argument(
+        "--location",
+        default=None,
+        help="venue, address, or meeting URL, when the email states one",
+    )
     p_cal_create.add_argument(
         "--description-file",
         required=True,

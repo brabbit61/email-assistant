@@ -13,8 +13,7 @@ send or delete email** (that's a property of the code, not just a promise).
 > ⚠️ It ships **safe by default**: `dry_run = true`, so a first run classifies
 > but writes nothing to Gmail until you deliberately go live.
 
-<!-- Owner: add a screenshot or GIF here — Gmail labels + a Telegram digest.
-     e.g. ![Telegram digest](docs/images/digest.png) -->
+![Demo: flagging an urgent email, then time-blocking it on the calendar via Telegram](docs/images/demo.gif)
 
 ## What you get
 

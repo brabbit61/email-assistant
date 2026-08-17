@@ -10,6 +10,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 import pytest
+from googleapiclient.errors import HttpError
 
 from assistant import (
     backfill,
@@ -802,11 +803,20 @@ def test_costs_folds_in_hermes_spend(tmp_path, monkeypatch, capsys):
 # --- open: Gmail-verified still-open ------------------------------
 
 
-class FakeThreadsService:
-    """svc.users().threads().get(...) fake — threads keyed by thread_id, each a
-    list of {"id": ..., "labelIds": [...]}."""
+class FakeResp(dict):
+    """Minimal httplib2-style response so HttpError(...).resp.status works."""
 
-    def __init__(self, threads: dict[str, list[dict]]):
+    def __init__(self, status):
+        super().__init__()
+        self.status = status
+        self.reason = "Not Found"
+
+
+class FakeThreadsService:
+    """svc.users().threads().get(...) fake — threads keyed by thread_id, each
+    either a list of {"id": ..., "labelIds": [...]} or an Exception to raise."""
+
+    def __init__(self, threads: dict[str, list[dict] | Exception]):
         self._threads = threads
         self.calls: list[str] = []
 
@@ -818,7 +828,10 @@ class FakeThreadsService:
 
     def get(self, userId, id, format):
         self.calls.append(id)
-        return self._Exec(self._threads[id])
+        result = self._threads[id]
+        if isinstance(result, Exception):
+            raise result
+        return self._Exec(result)
 
     class _Exec:
         def __init__(self, messages):
@@ -917,6 +930,51 @@ def test_open_reports_replied_as_cleared_even_if_unread_and_in_inbox(
     out = capsys.readouterr().out
     assert code == 0
     assert "— replied" in out
+
+
+def test_open_reports_deleted_thread_as_cleared_and_continues(
+    tmp_path, monkeypatch, capsys
+):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    svc = FakeThreadsService(
+        {
+            "t-gone": HttpError(FakeResp(404), b"{}"),
+            "t1": [{"id": "m1", "labelIds": ["UNREAD", "INBOX"]}],
+        }
+    )
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: svc)
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_actionable(
+        conn, "m-gone", "Action-Needed", "P2-This-Week", thread_id="t-gone"
+    )
+    _seed_actionable(conn, "m1", "Finance", "P1-Urgent", thread_id="t1")
+
+    code = cli.cmd_open(argparse.Namespace())
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "— deleted" in out
+    assert "Open — Gmail-verified (1):" in out
+    assert "2 actionable in DB · 1 open · 1 cleared" in out
+
+
+def test_open_still_aborts_loudly_on_non_404_http_error(tmp_path, monkeypatch, capsys):
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    svc = FakeThreadsService({"t1": HttpError(FakeResp(500), b"{}")})
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: svc)
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_actionable(conn, "m1", "Finance", "P1-Urgent")
+
+    code = cli.cmd_open(argparse.Namespace())
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""  # never a partial/unverified list
+    assert "Gmail check failed" in captured.err
 
 
 def test_open_with_empty_actionable_set_never_calls_gmail(

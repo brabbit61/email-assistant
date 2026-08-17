@@ -18,6 +18,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from googleapiclient.errors import HttpError
+
 from assistant import (
     apply,
     backfill,
@@ -516,12 +518,15 @@ def _thread_state(svc, thread_id: str, message_id: str) -> tuple[bool, bool, boo
 
 def cmd_open(args: argparse.Namespace) -> int:
     """Actionable set (Action-Needed / P1 / P2), cross-checked against live
-    Gmail: cleared the moment Gmail shows it read, archived, or replied to —
-    the disjunction of the three signals (open needs all three to fail).
+    Gmail: cleared the moment Gmail shows it read, archived, replied to, or
+    the thread is gone entirely (permanently deleted — an unambiguous 404).
 
     Read-only — the only Gmail call is threads().get. Never prints a partial
-    list: a Gmail failure aborts loudly before anything is printed, since a
-    half-verified "still open" list is worse than none (grounding rule).
+    list: any other Gmail failure aborts loudly before anything is printed,
+    since a half-verified "still open" list is worse than none (grounding
+    rule) — a 404 is the one signal certain enough not to need that caution,
+    since a deleted thread will never come back and would otherwise wedge
+    every future `open` the same way.
     """
     cfg = config.load()
     conn = store.open_db(cfg.db_path)
@@ -533,19 +538,26 @@ def cmd_open(args: argparse.Namespace) -> int:
     try:
         creds = gmail.get_credentials(cfg)
         svc = gmail.service(creds)
-        states = [
-            _thread_state(svc, r["thread_id"], r["gmail_message_id"]) for r in rows
-        ]
     except Exception as e:
         print(f"Gmail check failed — no list printed: {e}", file=sys.stderr)
         return 1
 
     open_lines, cleared_lines = [], []
-    for row, (read, archived, replied) in zip(rows, states):
+    for row in rows:
         label = row["priority"] or row["category"]
         sender = (row["sender"] or "")[:24]
         reason = (row["reasoning"] or row["subject"] or "")[:60]
         line = f"  {label} · {sender} · {reason}"
+        try:
+            read, archived, replied = _thread_state(
+                svc, row["thread_id"], row["gmail_message_id"]
+            )
+        except Exception as e:
+            if isinstance(e, HttpError) and e.resp.status == 404:
+                cleared_lines.append(f"{line} — deleted")
+                continue
+            print(f"Gmail check failed — no list printed: {e}", file=sys.stderr)
+            return 1
         if replied or archived or read:
             why = "replied" if replied else "archived" if archived else "read"
             cleared_lines.append(f"{line} — {why}")

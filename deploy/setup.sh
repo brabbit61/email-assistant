@@ -98,12 +98,12 @@ if command -v hermes >/dev/null 2>&1; then
 	hermes skills opt-out --remove --yes ||
 		echo "warning: could not opt hermes out of bundled skills"
 
-	# Registers the 3 digest cron jobs from hermes/cron-jobs.md.
+	# Registers the digest cron job from hermes/cron-jobs.md.
 	# Grep-guarded on job name so re-running never creates duplicates; picked
 	# up live by the gateway's cron ticker on its next tick, no restart needed.
 	if [ -f "$ROOT/secrets/.env" ] && grep -q '^TELEGRAM_CHAT_ID=' "$ROOT/secrets/.env"; then
 		CHAT_ID="$(grep '^TELEGRAM_CHAT_ID=' "$ROOT/secrets/.env" | cut -d= -f2-)"
-		echo "==> registering digest cron jobs (07:00 / 13:00 / 20:00, host-local time)"
+		echo "==> registering digest cron job (20:00, host-local time)"
 
 		register_digest() {
 			name="$1" schedule="$2" prompt="$3"
@@ -116,14 +116,10 @@ if command -v hermes >/dev/null 2>&1; then
 				echo "warning: could not register cron job $name"
 		}
 
-		register_digest "email-digest-morning" "0 7 * * *" \
-			"Compose and send the MORNING email digest now, following the Digest structure section of your email-assistant skill (morning window: overnight since 20:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
-		register_digest "email-digest-midday" "0 13 * * *" \
-			"Compose and send the MIDDAY email digest now, following the Digest structure section of your email-assistant skill (midday window: since 07:00). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
 		register_digest "email-digest-evening" "0 20 * * *" \
-			"Compose and send the EVENING email digest now, following the Digest structure section of your email-assistant skill (evening window: since 13:00; end with the running monthly spend line per the skill). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
+			"Compose and send the daily email digest now, following the Digest structure section of your email-assistant skill (window: since yesterday 20:00; end with the running monthly spend line per the skill). If \`assistant status\` shows the checkpoint is over 60 min stale, lead with the staleness warning. Output only the finished digest — no narration, no command output."
 
-		echo "note: cron times are host-local (see hermes/cron-jobs.md); pin with 'hermes config set timezone <zone>' if this system's timezone ever changes."
+		echo "note: cron time is host-local (see hermes/cron-jobs.md); pin with 'hermes config set timezone <zone>' if this system's timezone ever changes."
 	else
 		echo "note: secrets/.env or TELEGRAM_CHAT_ID missing — skipping digest cron registration (see README)."
 	fi

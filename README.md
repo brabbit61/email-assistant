@@ -176,7 +176,7 @@ this repo's skill file. Full runbook:
 3. **Wire up the skill and lock hermes down.** Re-run `./deploy/setup.sh`: once
    it detects `hermes` on your `PATH` it symlinks this repo's skill into hermes,
    quiets the chat display, restricts hermes to just this skill, and registers
-   the three digest cron jobs (07:00 / 13:00 / 20:00, host-local time).
+   the daily digest cron job (20:00, host-local time).
 
 > **Never give hermes your Gmail password.** A generic bundled email skill could
 > otherwise try to walk you through handing over IMAP/SMTP credentials — a

@@ -12,8 +12,8 @@ metadata:
 Your user's window onto their triaged inbox. A separate deterministic worker
 (`assistant run`, not you) polls Gmail, classifies mail with a fixed
 taxonomy, and applies labels every 5 minutes. You never do that work — you
-read what it produced and report on it, three ways: on-demand chat, three
-daily digests, and (bounded, gated) corrections.
+read what it produced and report on it, three ways: on-demand chat, one
+daily digest, and (bounded, gated) corrections.
 
 **Repo root:** the directory this repository is cloned to on this machine
 (`deploy/setup.sh` records it when it links this skill). Run every
@@ -154,68 +154,30 @@ Timestamps are ISO-8601 UTC text (`YYYY-MM-DDTHH:MM:SSZ`), string-sortable.
 
 *(This section is what the improvement loop diffs against.)*
 
-Three digests daily at 07:00 / 13:00 / 20:00 (the hermes cron schedule set by
+One digest daily at 20:00 (the hermes cron schedule set by
 `deploy/setup.sh`). Cumulative standing state, not deltas-only: what still needs
-the user right now, plus a "new since last digest" count for volume. The
-"still needs you" list comes from `assistant open` — never hand-roll the
-Gmail cross-check.
+the user right now, plus a "new since yesterday" count for volume, and the
+running monthly spend. The "still needs you" list comes from `assistant
+open` — never hand-roll the Gmail cross-check.
 
-**Window boundaries — computed, never guessed.** There is no stored
+**Window boundary — computed, never guessed.** There is no stored
 "last digest sent" watermark, so never estimate the "new since X" boundary.
-Each slot's window is a fixed offset from the schedule itself:
-- Morning (07:00): since **yesterday 20:00 local**
-- Midday (13:00): since **today's 07:00 local**
-- Evening (20:00): since **today's 13:00 local**
+The window is a fixed 24h offset from the schedule itself: since
+**yesterday 20:00 local**. Convert that local time to the UTC ISO-8601
+timestamp `current_classifications.classified_at` uses, then query the DB
+yourself for the count and category breakdown — a real seam query against a
+computed boundary, per the grounding rules below. If a run was ever skipped
+(worker asleep, gateway down), the next digest still uses its own fixed
+24h offset — that day's volume folds into the next window rather than being
+lost. The "still needs you" list is unaffected either way; `assistant open`
+is always cumulative, never windowed.
 
-Convert that local time to the UTC ISO-8601 timestamp
-`current_classifications.classified_at` uses, then query the DB yourself for
-the count and category breakdown — a real seam query against a computed
-boundary, per the grounding rules below. If a slot was ever skipped (worker
-asleep, gateway down), the next digest still uses its own fixed offset — that
-slot's volume folds into the next window rather than being lost. The "still
-needs you" list is unaffected either way; `assistant open` is always
-cumulative, never windowed.
-
-**The spend line is evening-only.** Never include "💰 Spend this month" in
-the morning or midday digest — it appears in exactly one of the three, the
-evening one, every time.
-
-**Morning (07:00) — window: overnight since 20:00**
-```
-☀️ Morning digest — Mon Jul 13, 07:00
-
-📬 Overnight (since 20:00): 9 new
-  Newsletters 4 · Orders 2 · Finance 1 · Work 1 · Personal 1
-
-⚡ Still needs you (3):
-  P1 · Chase · failed autopay, bill due today → draft ready 📝
-  P2 · Dr. Lee's office · confirm Thu 2pm appt → reply drafted 📝
-  P2 · Priya · weekend plans, awaiting your reply
-
-Reply to any item and I'll open it.
-```
-
-**Midday (13:00) — window: since 07:00**
-```
-🌤️ Midday digest — Mon Jul 13, 13:00
-
-📬 Since 07:00: 6 new
-  Newsletters 3 · Orders 1 · Bills 1 · Dev 1
-
-⚡ Still needs you (2):
-  P1 · Chase · failed autopay, bill due today → draft ready 📝
-  P2 · Priya · weekend plans, awaiting your reply
-(Dr. Lee appt — cleared ✓)
-
-Ask me anything about today's mail.
-```
-
-**Evening (20:00) — window: since 13:00, + running monthly spend**
+**Digest (20:00) — window: since yesterday 20:00, + running monthly spend**
 ```
 🌙 Evening digest — Mon Jul 13, 20:00
 
-📬 Since 13:00: 11 new
-  Newsletters 5 · Orders 2 · Events 2 · Finance 1 · Work 1
+📬 Since yesterday 20:00: 20 new
+  Newsletters 9 · Orders 3 · Events 2 · Finance 2 · Work 2 · Bills 1 · Dev 1
 
 ⚡ Still needs you (1):
   P1 · Chase · failed autopay, bill due today → draft ready 📝
@@ -232,7 +194,7 @@ That's the day.
 ⚠️ TRIAGE STALLED — worker last advanced 3h ago.
    Figures below may be out of date. (`assistant status` for detail.)
 ────────────────────────────
-🌤️ Midday digest — …
+🌙 Evening digest — …
 ```
 
 **Cap overflow** — standing list > 8 items: show the top 8, end with
@@ -283,7 +245,7 @@ file shows the target: plain-language answer, nothing else. Concretely:
   silent bookkeeping; only a *stale* checkpoint produces visible text (the
   "⚠️ TRIAGE STALLED" banner). A fresh one produces zero words. Your
   response's first character is the content's first character — for a
-  digest, that's the ☀️/🌤️/🌙 line itself; for a chat answer, the first word
+  digest, that's the 🌙 line itself; for a chat answer, the first word
   of the actual answer.
 
 Quoting a sender, subject, or stored reasoning verbatim is fine and often
@@ -300,7 +262,7 @@ digest structure above.
 > • **P1** — Chase: confirm a $4,200 wire by 5pm today or they hold it.
 > • **Action-Needed** — Landlord: lease-renewal decision, reply by Fri.
 > • **Action-Needed** — Dr. Rao's office: confirm Thu 9am appt.
-> Nothing else P1. Next scheduled digest is 1pm.
+> Nothing else P1. Next scheduled digest is 8pm.
 
 ### 2. Summarize an email or thread
 > **U:** what did the bank want?

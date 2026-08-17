@@ -946,7 +946,9 @@ def test_open_reports_deleted_thread_as_cleared_and_continues(
     monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
     monkeypatch.setattr(gmail, "service", lambda creds: svc)
     conn = store.open_db(root / "data" / "triage.db")
-    _seed_actionable(conn, "m-gone", "Action-Needed", "P2-This-Week", thread_id="t-gone")
+    _seed_actionable(
+        conn, "m-gone", "Action-Needed", "P2-This-Week", thread_id="t-gone"
+    )
     _seed_actionable(conn, "m1", "Finance", "P1-Urgent", thread_id="t1")
 
     code = cli.cmd_open(argparse.Namespace())

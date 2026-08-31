@@ -120,6 +120,32 @@ def test_expired_historyid_triggers_bounded_sweep(tmp_path, monkeypatch):
     assert gap == 1  # loud, auditable gap marker
 
 
+def test_deleted_message_is_skipped_not_fatal(tmp_path, monkeypatch):
+    # A message can be listed in history and then permanently deleted before
+    # the full fetch (get_message 404s). That must not crash the whole run —
+    # crashing here means the checkpoint never advances, so the next tick
+    # re-lists the same window, hits the same 404, forever (a permanent wedge).
+    conn = store.open_db(tmp_path / "triage.db")
+    _seed_checkpoint(conn, history_id="100")
+    monkeypatch.setattr(
+        gmail, "iter_history", lambda svc, s: (["gone", "m2"], [], "200")
+    )
+
+    def _get(svc, mid):
+        if mid == "gone":
+            raise HttpError(FakeResp(404), b"{}")
+        return _msg(mid)
+
+    monkeypatch.setattr(gmail, "get_message", _get)
+
+    result = poll.poll_once(conn, SVC)
+
+    assert result.inserted == 1
+    assert _msg_count(conn) == 1
+    assert conn.execute("SELECT 1 FROM messages WHERE gmail_message_id='m2'").fetchone()
+    assert _checkpoint(conn) == "200"  # still advances past the deleted message
+
+
 def test_relabel_events_forwarded_before_checkpoint(tmp_path, monkeypatch):
     # Flow A: poll_once hands label events to correct.detect_relabels, and
     # does so *before* it writes the 'finished' checkpoint row (same crash-safety

@@ -25,7 +25,7 @@ class _ModifyExec:
     def __init__(self, calls, msg_id, body, fail):
         self._calls, self._msg_id, self._body, self._fail = calls, msg_id, body, fail
 
-    def execute(self):
+    def execute(self, num_retries=0):
         if self._fail:
             raise RuntimeError("gmail outage")
         self._calls.append((self._msg_id, self._body))

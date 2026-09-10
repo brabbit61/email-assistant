@@ -485,7 +485,11 @@ def cmd_import_hermes(args: argparse.Namespace) -> int:
 
 def _actionable_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """The standing actionable set the digests/hermes rundown care about:
-    Action-Needed by category, or P1/P2 by priority regardless of category."""
+    Action-Needed by category, or P1/P2 by priority regardless of category.
+
+    Ordered fully deterministically (classified_at, then gmail_message_id as a
+    tiebreaker for same-second classifications) — `open`'s batch rotation
+    walks this exact order across runs and needs it stable."""
     return conn.execute(
         "SELECT cc.gmail_message_id, cc.category, cc.priority, cc.reasoning, "
         "       m.sender, m.subject, m.thread_id "
@@ -494,7 +498,7 @@ def _actionable_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         "WHERE (cc.category = 'Action-Needed' "
         "       OR cc.priority IN ('P1-Urgent', 'P2-This-Week')) "
         "  AND cc.source != 'backfill' "
-        "ORDER BY cc.classified_at"
+        "ORDER BY cc.classified_at, cc.gmail_message_id"
     ).fetchall()
 
 
@@ -507,7 +511,10 @@ def _thread_state(svc, thread_id: str, message_id: str) -> tuple[bool, bool, boo
     message's own labels.
     """
     thread = (
-        svc.users().threads().get(userId="me", id=thread_id, format="minimal").execute()
+        svc.users()
+        .threads()
+        .get(userId="me", id=thread_id, format="minimal")
+        .execute(num_retries=5)  # backs off on Gmail's per-user rateLimitExceeded
     )
     messages = thread.get("messages", [])
     own = next((m for m in messages if m["id"] == message_id), {})
@@ -516,17 +523,48 @@ def _thread_state(svc, thread_id: str, message_id: str) -> tuple[bool, bool, boo
     return "UNREAD" not in labels, "INBOX" not in labels, replied
 
 
+_OPEN_BATCH_SIZE = 50  # ponytail: 616 actionable rows in one run 403'd Gmail's
+# per-user "Units per minute" quota even with retries (verified live). Capping
+# the per-run Gmail-call volume is the actual fix; raise this only alongside
+# evidence the quota tolerates it.
+
+
+def _open_cursor(conn: sqlite3.Connection) -> str | None:
+    """Last gmail_message_id checked by a prior `open` batch, so each run
+    picks up where the last one left off instead of re-checking from the
+    start every time. Stored as a `run_events` row (phase='open') — no schema
+    change, mirrors how `current_checkpoint` rides the same append-only log."""
+    row = conn.execute(
+        "SELECT note FROM run_events WHERE phase = 'open' "
+        "ORDER BY event_id DESC LIMIT 1"
+    ).fetchone()
+    return row["note"] if row else None
+
+
+def _record_open_cursor(conn: sqlite3.Connection, last_message_id: str) -> None:
+    conn.execute(
+        "INSERT INTO run_events(run_id, phase, status, note, recorded_at) "
+        "VALUES (?, 'open', 'ok', ?, ?)",
+        (store.new_id(), last_message_id, store.now_iso()),
+    )
+    conn.commit()
+
+
 def cmd_open(args: argparse.Namespace) -> int:
     """Actionable set (Action-Needed / P1 / P2), cross-checked against live
     Gmail: cleared the moment Gmail shows it read, archived, replied to, or
     the thread is gone entirely (permanently deleted — an unambiguous 404).
 
-    Read-only — the only Gmail call is threads().get. Never prints a partial
-    list: any other Gmail failure aborts loudly before anything is printed,
-    since a half-verified "still open" list is worse than none (grounding
-    rule) — a 404 is the one signal certain enough not to need that caution,
-    since a deleted thread will never come back and would otherwise wedge
-    every future `open` the same way.
+    Read-only — the only Gmail call is threads().get. Checks at most
+    `_OPEN_BATCH_SIZE` rows per invocation, resuming after the last checked
+    message next time (wrapping to the start once the backlog end is
+    reached) — a full sweep of a large actionable set blows through Gmail's
+    per-user rate limit in one run regardless of retries. Never prints a
+    partial *batch*: any other Gmail failure aborts loudly before anything is
+    printed, since a half-verified "still open" list is worse than none
+    (grounding rule) — a 404 is the one signal certain enough not to need
+    that caution, since a deleted thread will never come back and would
+    otherwise wedge every future `open` the same way.
     """
     cfg = config.load()
     conn = store.open_db(cfg.db_path)
@@ -534,6 +572,11 @@ def cmd_open(args: argparse.Namespace) -> int:
     if not rows:
         print("0 actionable in DB · 0 open · 0 cleared")
         return 0
+
+    cursor = _open_cursor(conn)
+    ids = [r["gmail_message_id"] for r in rows]
+    start = ids.index(cursor) + 1 if cursor in ids else 0
+    batch = (rows[start:] + rows[:start])[:_OPEN_BATCH_SIZE]
 
     try:
         creds = gmail.get_credentials(cfg)
@@ -543,7 +586,7 @@ def cmd_open(args: argparse.Namespace) -> int:
         return 1
 
     open_lines, cleared_lines = [], []
-    for row in rows:
+    for row in batch:
         label = row["priority"] or row["category"]
         sender = (row["sender"] or "")[:24]
         reason = (row["reasoning"] or row["subject"] or "")[:60]
@@ -564,6 +607,8 @@ def cmd_open(args: argparse.Namespace) -> int:
         else:
             open_lines.append(line)
 
+    _record_open_cursor(conn, batch[-1]["gmail_message_id"])
+
     print(f"Open — Gmail-verified ({len(open_lines)}):")
     if open_lines:
         print("\n".join(open_lines))
@@ -571,8 +616,8 @@ def cmd_open(args: argparse.Namespace) -> int:
         print(f"Cleared since triage ({len(cleared_lines)}):")
         print("\n".join(cleared_lines))
     print(
-        f"{len(rows)} actionable in DB · {len(open_lines)} open · "
-        f"{len(cleared_lines)} cleared"
+        f"{len(rows)} actionable in DB · {len(batch)} checked this run · "
+        f"{len(open_lines)} open · {len(cleared_lines)} cleared"
     )
     return 0
 

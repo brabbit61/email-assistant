@@ -16,7 +16,7 @@ class _Exec:
     def __init__(self, result, on_execute=None):
         self._result, self._on_execute = result, on_execute
 
-    def execute(self):
+    def execute(self, num_retries=0):
         if self._on_execute:
             self._on_execute()
         return self._result

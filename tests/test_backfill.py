@@ -4,9 +4,20 @@ Fakes at the `gmail` helper seam (monkeypatch) against a real tmp SQLite —
 mirrors test_poll.py's style.
 """
 
+from googleapiclient.errors import HttpError
+
 from assistant import backfill, store
 
 SVC = object()  # opaque: gmail.list_message_ids is monkeypatched
+
+
+class FakeResp(dict):
+    """Minimal httplib2-style response so HttpError(...).resp.status works."""
+
+    def __init__(self, status):
+        super().__init__()
+        self.status = status
+        self.reason = "Not Found"
 
 
 def _seed_classification(conn, mid, source="worker"):
@@ -278,6 +289,31 @@ def test_run_submits_first_page_when_no_open_batch(tmp_path, monkeypatch):
         "SELECT status, batch_id, messages_seen FROM run_events WHERE phase='backfill'"
     ).fetchone()
     assert (ev[0], ev[1], ev[2]) == ("submitted", "new1", 2)
+
+
+def test_run_skips_message_deleted_between_list_and_fetch(tmp_path, monkeypatch):
+    # Same race as poll's history-list gap: a message can be listed then
+    # deleted before the full fetch. Must not abort the whole page's submit.
+    conn = store.open_db(tmp_path / "triage.db")
+    monkeypatch.setattr(
+        backfill.gmail, "list_message_ids", lambda svc, q: ["gone", "m2"]
+    )
+
+    def _get(svc, mid):
+        if mid == "gone":
+            raise HttpError(FakeResp(404), b"{}")
+        return _fake_get_message(svc, mid)
+
+    monkeypatch.setattr(backfill.gmail, "get_message", _get)
+    batches = _Batches()
+
+    r = backfill.run(
+        conn, SVC, _Client(batches), "claude-haiku-4-5-20251001", None, None
+    )
+
+    assert r.submitted_count == 1
+    assert len(batches.created[0]) == 1
+    assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
 
 
 def test_run_reports_still_processing_and_submits_nothing(tmp_path):

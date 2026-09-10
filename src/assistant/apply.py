@@ -88,7 +88,7 @@ def apply_verdict(
     try:
         svc.users().messages().modify(
             userId="me", id=gmail_message_id, body=body
-        ).execute()
+        ).execute(num_retries=5)  # backs off on Gmail's per-user rateLimitExceeded
     except Exception as e:
         _record_terminal(
             conn, actions, actor, run_id, gmail_message_id, "failed", str(e)
@@ -142,7 +142,7 @@ def apply_relabel(
     try:
         svc.users().messages().modify(
             userId="me", id=gmail_message_id, body=body
-        ).execute()
+        ).execute(num_retries=5)  # backs off on Gmail's per-user rateLimitExceeded
     except Exception as e:
         _record_terminal(
             conn, actions, actor, run_id, gmail_message_id, "failed", str(e)

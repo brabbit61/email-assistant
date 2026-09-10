@@ -93,7 +93,15 @@ def poll_once(conn: sqlite3.Connection, svc: Resource) -> RunResult:
 
     inserted = 0
     for msg_id in ids:
-        row = gmail.get_message(svc, msg_id)
+        try:
+            row = gmail.get_message(svc, msg_id)
+        except HttpError as e:
+            if e.resp.status != 404:
+                raise  # transient/other: fail loudly, next timer tick retries
+            # Deleted between the history/list event and this fetch — gone for
+            # good. Skip it; raising here would wedge every future poll (same
+            # historyId re-lists it, 404s again, checkpoint never advances).
+            continue
         cur = conn.execute(
             "INSERT OR IGNORE INTO messages"
             "(gmail_message_id, thread_id, sender, subject, body, "

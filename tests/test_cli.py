@@ -59,7 +59,7 @@ class _ModifyExec:
     def __init__(self, calls, msg_id, body, fail):
         self._calls, self._msg_id, self._body, self._fail = calls, msg_id, body, fail
 
-    def execute(self):
+    def execute(self, num_retries=0):
         if self._fail:
             raise RuntimeError("gmail outage")
         self._calls.append((self._msg_id, self._body))
@@ -837,7 +837,7 @@ class FakeThreadsService:
         def __init__(self, messages):
             self._messages = messages
 
-        def execute(self):
+        def execute(self, num_retries=0):
             return {"messages": self._messages}
 
 
@@ -870,7 +870,7 @@ def test_open_reports_unread_inbox_unreplied_as_open(tmp_path, monkeypatch, caps
     out = capsys.readouterr().out
     assert "Open — Gmail-verified (1):" in out
     assert "P1-Urgent" in out
-    assert "1 actionable in DB · 1 open · 0 cleared" in out
+    assert "1 actionable in DB · 1 checked this run · 1 open · 0 cleared" in out
 
 
 def test_open_reports_read_as_cleared(tmp_path, monkeypatch, capsys):
@@ -888,7 +888,7 @@ def test_open_reports_read_as_cleared(tmp_path, monkeypatch, capsys):
     assert code == 0
     assert "Cleared since triage (1):" in out
     assert "— read" in out
-    assert "1 actionable in DB · 0 open · 1 cleared" in out
+    assert "1 actionable in DB · 1 checked this run · 0 open · 1 cleared" in out
 
 
 def test_open_reports_archived_as_cleared(tmp_path, monkeypatch, capsys):
@@ -957,7 +957,7 @@ def test_open_reports_deleted_thread_as_cleared_and_continues(
     assert code == 0
     assert "— deleted" in out
     assert "Open — Gmail-verified (1):" in out
-    assert "2 actionable in DB · 1 open · 1 cleared" in out
+    assert "2 actionable in DB · 2 checked this run · 1 open · 1 cleared" in out
 
 
 def test_open_still_aborts_loudly_on_non_404_http_error(tmp_path, monkeypatch, capsys):
@@ -975,6 +975,54 @@ def test_open_still_aborts_loudly_on_non_404_http_error(tmp_path, monkeypatch, c
     assert code == 1
     assert captured.out == ""  # never a partial/unverified list
     assert "Gmail check failed" in captured.err
+
+
+def test_open_caps_batch_size_and_rotates_across_runs(tmp_path, monkeypatch, capsys):
+    # A large actionable set (616 in production) 403's Gmail's per-user quota
+    # in one run even with retries — capping per-run volume is the actual fix.
+    # Each run must check only _OPEN_BATCH_SIZE rows and pick up where the
+    # last run left off, wrapping back to the start once it reaches the end.
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    monkeypatch.setattr(cli, "_OPEN_BATCH_SIZE", 2)
+    svc = FakeThreadsService(
+        {f"t{i}": [{"id": f"m{i}", "labelIds": ["UNREAD", "INBOX"]}] for i in range(5)}
+    )
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: svc)
+    conn = store.open_db(root / "data" / "triage.db")
+    for i in range(5):
+        _seed_actionable(conn, f"m{i}", "Finance", "P1-Urgent", thread_id=f"t{i}")
+
+    code = cli.cmd_open(argparse.Namespace())
+    assert code == 0
+    assert svc.calls == ["t0", "t1"]
+    assert "5 actionable in DB · 2 checked this run" in capsys.readouterr().out
+
+    code = cli.cmd_open(argparse.Namespace())
+    assert code == 0
+    assert svc.calls == ["t0", "t1", "t2", "t3"]  # picked up after t1, not from t0
+
+    code = cli.cmd_open(argparse.Namespace())
+    assert code == 0
+    assert svc.calls == ["t0", "t1", "t2", "t3", "t4", "t0"]  # wraps to the start
+
+
+def test_open_does_not_advance_cursor_when_batch_aborts(tmp_path, monkeypatch, capsys):
+    # A quota failure mid-batch must not move the cursor past unverified rows —
+    # otherwise a failed run would silently skip checking them forever.
+    root = _make_repo(tmp_path)
+    _patch_config(monkeypatch, root)
+    svc = FakeThreadsService({"t1": HttpError(FakeResp(500), b"{}")})
+    monkeypatch.setattr(gmail, "get_credentials", lambda cfg: object())
+    monkeypatch.setattr(gmail, "service", lambda creds: svc)
+    conn = store.open_db(root / "data" / "triage.db")
+    _seed_actionable(conn, "m1", "Finance", "P1-Urgent", thread_id="t1")
+
+    code = cli.cmd_open(argparse.Namespace())
+
+    assert code == 1
+    assert cli._open_cursor(conn) is None
 
 
 def test_open_with_empty_actionable_set_never_calls_gmail(

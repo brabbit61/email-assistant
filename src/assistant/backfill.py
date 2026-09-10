@@ -27,6 +27,8 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from googleapiclient.errors import HttpError
+
 from assistant import apply, gmail, store
 from assistant.classify import (
     UNCLASSIFIED,
@@ -222,10 +224,13 @@ def _is_classified(conn: sqlite3.Connection, mid: str) -> bool:
 
 def _submit_page(
     conn: sqlite3.Connection, svc, client, model: str, ids: list[str]
-) -> str:
+) -> tuple[str | None, int]:
     """Fetch each message (persist to `messages` for the classifications FK), submit
     them as one Batch API request, and record a `submitted` checkpoint carrying the
-    batch id. custom_id = gmail_message_id maps results back on ingest.
+    batch id. custom_id = gmail_message_id maps results back on ingest. Returns
+    (batch_id, count actually submitted) — a message deleted between the list and
+    this fetch is dropped, so count can be less than len(ids); if every id in the
+    page was deleted, no batch is created and batch_id is None.
 
     origin='backfill' keeps the row out of the live `assistant run` loop even
     while a result is still pending (e.g. expired/canceled, which deliberately
@@ -235,7 +240,12 @@ def _submit_page(
     now = store.now_iso()
     requests = []
     for mid in ids:
-        msg = gmail.get_message(svc, mid)
+        try:
+            msg = gmail.get_message(svc, mid)
+        except HttpError as e:
+            if e.resp.status != 404:
+                raise  # transient/other: fail loudly
+            continue  # deleted between the list and this fetch — skip it
         conn.execute(
             "INSERT OR IGNORE INTO messages"
             "(gmail_message_id, thread_id, sender, subject, body, internal_date_ms, "
@@ -264,15 +274,18 @@ def _submit_page(
         )
     conn.commit()
 
+    if not requests:
+        return None, 0  # every id in the page was deleted before the fetch
+
     batch = client.messages.batches.create(requests=requests)
     conn.execute(
         "INSERT INTO run_events"
         "(run_id, phase, status, batch_id, messages_seen, recorded_at) "
         "VALUES (?, 'backfill', 'submitted', ?, ?, ?)",
-        (run_id, batch.id, len(ids), store.now_iso()),
+        (run_id, batch.id, len(requests), store.now_iso()),
     )
     conn.commit()
-    return batch.id
+    return batch.id, len(requests)
 
 
 def _batch_error(item) -> str:
@@ -389,8 +402,9 @@ def run(
     if not ids:
         result.complete = True
         return result
-    result.submitted_batch = _submit_page(conn, svc, client, model, ids)
-    result.submitted_count = len(ids)
+    result.submitted_batch, result.submitted_count = _submit_page(
+        conn, svc, client, model, ids
+    )
     return result
 
 
